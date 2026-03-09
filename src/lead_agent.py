@@ -6,6 +6,7 @@ Orchestra - Lead Agent (팀장)
 import subprocess
 import json
 import re
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -23,8 +24,8 @@ class LeadAgent:
     IDEA = """당신은 소프트웨어 개발 팀의 팀장 AI입니다.
 당신의 역할은:
 1. 사용자의 요구사항을 분석합니다.
-2. 각 팀원의 역할에 맞게 태스크를 단계별로 분해합니다.
-3. 각 단계는 작고 명확한 단위여야 합니다.
+2. 각 팀원의 역할에 맞게 태스크를 분해합니다.
+3. 각 태스크 간의 의존관계(depends_on)를 명시합니다.
 
 중요: 개발 태스크가 아닌 경우(인사, 잡담, 질문 등)에는 빈 배열 []을 반환하세요.
 반드시 JSON 형식으로만 응답하세요. 다른 텍스트는 포함하지 마세요."""
@@ -186,16 +187,8 @@ class LeadAgent:
 
     def _decompose(self, user_input: str) -> list[dict]:
         """
-        Claude Code를 사용해 user_input을 팀원별 태스크로 분해합니다.
-        반환 형식:
-        [
-          {
-            "agent_id": "backend",
-            "instruction": "...",
-            "parallel": true   // false면 앞 태스크 완료 후 실행
-          },
-          ...
-        ]
+        Claude Code를 사용해 user_input을 의존성 기반 태스크 그래프로 분해합니다.
+        토폴로지 정렬로 실행 웨이브(step)를 자동 생성합니다.
         """
         agent_list = json.dumps(self.list_agents(), ensure_ascii=False, indent=2)
 
@@ -216,27 +209,17 @@ class LeadAgent:
 - 단, "이전 작업 컨텍스트"가 있고, 사용자가 "고쳐줘", "수정해", "해결해" 등 이전 작업을 참조하는 경우에는 개발 태스크입니다. 컨텍스트의 문제점을 기반으로 태스크를 분해하세요.
 
 작업 계획 규칙:
-- 큰 작업은 여러 단계(step)로 나누세요. 각 단계는 작고 명확해야 합니다.
-- 같은 단계 안의 태스크는 병렬 실행됩니다.
-- 단계 간에는 순차적으로 실행됩니다 (1단계 완료 → 2단계 시작).
+- 각 태스크에 고유 id를 부여하세요 (예: "t1", "t2", ...).
+- depends_on에 선행 태스크 id를 명시하세요. 의존성이 없으면 빈 배열 [].
+- 시스템이 의존성을 분석하여 자동으로 병렬 실행합니다. 단계 번호는 불필요합니다.
 - 각 instruction은 간결하게 핵심만. 전체 코드가 아닌 핵심 구조만 지시하세요.
 
 개발 태스크인 경우에만 아래 형식으로 응답하세요:
 [
-  {{
-    "step": 1,
-    "title": "단계 제목",
-    "tasks": [
-      {{"agent_id": "팀원ID", "instruction": "구체적인 지시 내용"}}
-    ]
-  }},
-  {{
-    "step": 2,
-    "title": "단계 제목",
-    "tasks": [
-      {{"agent_id": "팀원ID", "instruction": "구체적인 지시 내용"}}
-    ]
-  }}
+  {{"id": "t1", "agent_id": "팀원ID", "instruction": "구체적인 지시", "depends_on": []}},
+  {{"id": "t2", "agent_id": "팀원ID", "instruction": "구체적인 지시", "depends_on": ["t1"]}},
+  {{"id": "t3", "agent_id": "팀원ID", "instruction": "구체적인 지시", "depends_on": ["t1"]}},
+  {{"id": "t4", "agent_id": "팀원ID", "instruction": "구체적인 지시", "depends_on": ["t2", "t3"]}}
 ]"""
 
         try:
@@ -253,7 +236,6 @@ class LeadAgent:
                 return self._fallback_decompose(user_input)
 
             raw = result.stdout.strip()
-            # JSON 블록 추출 (```json ... ``` 감싸진 경우도 처리)
             raw = re.sub(r"```json\s*|\s*```", "", raw).strip()
             tasks = json.loads(raw)
 
@@ -261,20 +243,75 @@ class LeadAgent:
             if isinstance(tasks, list) and len(tasks) == 0:
                 return []
 
-            # step 기반 포맷 검증
+            # 유효한 에이전트만 남기기
             valid_ids = set(self.agents.keys())
-            for step in tasks:
-                step["tasks"] = [
-                    t for t in step.get("tasks", [])
-                    if t.get("agent_id") in valid_ids
-                ]
-            # 빈 단계 제거
-            tasks = [s for s in tasks if s.get("tasks")]
-            return tasks
+            tasks = [t for t in tasks if t.get("agent_id") in valid_ids]
+
+            if not tasks:
+                return []
+
+            # 토폴로지 정렬 → step 기반 포맷으로 변환
+            return self._toposort_to_steps(tasks)
 
         except (json.JSONDecodeError, FileNotFoundError) as e:
             print(f"[팀장] ⚠️  파싱 실패 ({e}), 폴백 모드 사용")
             return self._fallback_decompose(user_input)
+
+    def _toposort_to_steps(self, tasks: list[dict]) -> list[dict]:
+        """
+        의존성 기반 태스크 리스트를 토폴로지 정렬하여
+        실행 웨이브(step) 포맷으로 변환합니다 (Kahn's algorithm).
+        """
+        task_map = {t["id"]: t for t in tasks}
+        valid_ids = set(task_map.keys())
+
+        # 진입 차수 계산
+        in_degree: dict[str, int] = {tid: 0 for tid in valid_ids}
+        dependents: dict[str, list[str]] = {tid: [] for tid in valid_ids}
+
+        for t in tasks:
+            for dep in t.get("depends_on", []):
+                if dep in valid_ids:
+                    in_degree[t["id"]] += 1
+                    dependents[dep].append(t["id"])
+
+        # BFS 웨이브별 수집
+        queue = deque([tid for tid, deg in in_degree.items() if deg == 0])
+        waves: list[list[dict]] = []
+        visited = set()
+
+        while queue:
+            wave_size = len(queue)
+            wave_tasks = []
+            for _ in range(wave_size):
+                tid = queue.popleft()
+                visited.add(tid)
+                wave_tasks.append(task_map[tid])
+                for dep_tid in dependents[tid]:
+                    in_degree[dep_tid] -= 1
+                    if in_degree[dep_tid] == 0:
+                        queue.append(dep_tid)
+            waves.append(wave_tasks)
+
+        # 순환 의존성 검출 — 방문하지 못한 노드가 있으면 순환
+        if len(visited) < len(valid_ids):
+            orphans = valid_ids - visited
+            print(f"[팀장] ⚠️  순환 의존성 감지: {orphans}, 남은 태스크를 마지막 웨이브에 추가")
+            waves.append([task_map[tid] for tid in orphans])
+
+        # step 포맷으로 변환
+        steps = []
+        for i, wave in enumerate(waves, 1):
+            agent_names = ", ".join(t["agent_id"] for t in wave)
+            steps.append({
+                "step": i,
+                "title": f"Wave {i} ({agent_names})",
+                "tasks": [
+                    {"agent_id": t["agent_id"], "instruction": t["instruction"]}
+                    for t in wave
+                ],
+            })
+        return steps
 
     def _fallback_decompose(self, user_input: str) -> list[dict]:
         """Claude Code 없이 동작하는 폴백: 모든 팀원에게 동일 지시."""
