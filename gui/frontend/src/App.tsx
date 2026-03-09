@@ -8,6 +8,7 @@ import ReportPanel from './components/ReportPanel';
 import AgentDetailPanel from './components/AgentDetailPanel';
 import type { AgentDetail } from './components/AgentDetailPanel';
 import ProjectSetup from './components/ProjectSetup';
+import PermissionDialog from './components/PermissionDialog';
 
 import * as WailsApp from '../wailsjs/go/main/App';
 
@@ -237,6 +238,9 @@ export default function App() {
           onClose={() => { setShowDetail(false); setSelectedAgent(null); }}
         />
       </div>
+
+      {/* 권한 승인 다이얼로그 */}
+      <PermissionDialog />
     </div>
   );
 }

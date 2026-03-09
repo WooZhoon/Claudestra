@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -248,6 +249,9 @@ func (a *App) RunLeadSession(userInput string) string {
 		a.lead.CLIPath = findCLI()
 	}
 
+	// PreToolUse 훅 설정 (프로젝트 .claude/settings.json)
+	a.ensureHookSettings()
+
 	// fsnotify 로그 감시 시작
 	// 연속된 같은 타입 청크는 append로 이어붙임 (줄바꿈 방지)
 	var lastAgent, lastType string
@@ -282,6 +286,46 @@ func (a *App) RunLeadSession(userInput string) string {
 		logFn(fmt.Sprintf("[팀장] ⚠️ 로그 감시 시작 실패: %s", err))
 	}
 	defer watcher.Stop()
+
+	// permissions 감시 → GUI 승인 다이얼로그
+	permDir := internal.PermissionsDir(a.workspace.Root)
+	os.MkdirAll(permDir, 0755)
+	permWatcher, permErr := fsnotify.NewWatcher()
+	if permErr == nil {
+		permWatcher.Add(permDir)
+		permStop := make(chan struct{})
+		go func() {
+			for {
+				select {
+				case <-permStop:
+					return
+				case event, ok := <-permWatcher.Events:
+					if !ok {
+						return
+					}
+					if (event.Has(fsnotify.Write) || event.Has(fsnotify.Create)) &&
+						strings.Contains(event.Name, "request-") &&
+						strings.HasSuffix(event.Name, ".json") {
+						// 요청 파일 읽기
+						data, err := os.ReadFile(event.Name)
+						if err != nil {
+							continue
+						}
+						var req internal.PermissionRequest
+						if err := json.Unmarshal(data, &req); err != nil {
+							continue
+						}
+						runtime.EventsEmit(a.ctx, "permission-request", req)
+					}
+				case <-permWatcher.Errors:
+				}
+			}
+		}()
+		defer func() {
+			close(permStop)
+			permWatcher.Close()
+		}()
+	}
 
 	// team.json 변경 감시 → 사이드바 즉시 업데이트
 	teamWatcher, err := fsnotify.NewWatcher()
@@ -343,6 +387,64 @@ func truncate(s string, maxLen int) string {
 		return s[:maxLen] + "..."
 	}
 	return s
+}
+
+// ── 권한 승인/거부 ──
+
+// RespondPermission: 프론트엔드에서 allow/disallow 클릭 시 호출
+func (a *App) RespondPermission(id string, allowed bool) error {
+	if a.workspace == nil {
+		return fmt.Errorf("프로젝트가 열려있지 않습니다")
+	}
+	permDir := internal.PermissionsDir(a.workspace.Root)
+	return internal.WriteResponse(permDir, &internal.PermissionResponse{
+		ID:      id,
+		Allowed: allowed,
+	})
+}
+
+// ensureHookSettings writes PreToolUse hook config to project .claude/settings.json
+func (a *App) ensureHookSettings() {
+	if a.workspace == nil {
+		return
+	}
+	cliPath := a.lead.CLIPath
+	if cliPath == "" {
+		cliPath = findCLI()
+	}
+
+	settingsDir := filepath.Join(a.workspace.Root, ".claude")
+	settingsFile := filepath.Join(settingsDir, "settings.json")
+
+	// 기존 설정 읽기
+	var settings map[string]interface{}
+	if data, err := os.ReadFile(settingsFile); err == nil {
+		json.Unmarshal(data, &settings)
+	}
+	if settings == nil {
+		settings = make(map[string]interface{})
+	}
+
+	// 훅 설정 구성
+	hookCommand := cliPath + " hook pretooluse"
+	expectedHook := map[string]interface{}{
+		"type":    "command",
+		"command": hookCommand,
+		"timeout": 300,
+	}
+
+	hookEntry := map[string]interface{}{
+		"matcher": ".*",
+		"hooks":   []interface{}{expectedHook},
+	}
+
+	settings["hooks"] = map[string]interface{}{
+		"PreToolUse": []interface{}{hookEntry},
+	}
+
+	os.MkdirAll(settingsDir, 0755)
+	data, _ := json.MarshalIndent(settings, "", "  ")
+	os.WriteFile(settingsFile, data, 0644)
 }
 
 // findCLI searches for the claudestra binary in common locations.

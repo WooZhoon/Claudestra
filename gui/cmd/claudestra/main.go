@@ -3,10 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 
 	"gui/internal"
 )
@@ -38,6 +40,8 @@ func main() {
 		cmdAssign()
 	case "lead-session":
 		cmdLeadSession()
+	case "hook":
+		cmdHook()
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -62,7 +66,8 @@ func printUsage() {
   claudestra idea <agent>              에이전트 이데아 출력
   claudestra output <agent>            에이전트 최근 출력
   claudestra assign <agent> <instr>    팀원에게 태스크 실행 (동기)
-  claudestra lead-session <request>   단일 세션 모드 (팀장이 CLI로 전체 관리)`)
+  claudestra lead-session <request>   단일 세션 모드 (팀장이 CLI로 전체 관리)
+  claudestra hook pretooluse          PreToolUse 훅 (stdin에서 JSON 읽음)`)
 }
 
 // ── 헬퍼 ──
@@ -510,4 +515,98 @@ func cmdLeadSession() {
 
 	fmt.Println("\n--- RESULT ---")
 	fmt.Println(result)
+}
+
+// ── hook (PreToolUse 훅) ──
+
+func cmdHook() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "사용법: claudestra hook pretooluse")
+		os.Exit(1)
+	}
+
+	switch os.Args[2] {
+	case "pretooluse":
+		cmdHookPreToolUse()
+	default:
+		fmt.Fprintf(os.Stderr, "알 수 없는 hook 서브커맨드: %s\n", os.Args[2])
+		os.Exit(1)
+	}
+}
+
+// cmdHookPreToolUse: PreToolUse 훅 — stdin에서 JSON 읽고 화이트리스트 체크
+func cmdHookPreToolUse() {
+	// stdin에서 훅 입력 읽기
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		os.Exit(0) // 읽기 실패 시 허용
+	}
+
+	var input struct {
+		ToolName  string                 `json:"tool_name"`
+		ToolInput map[string]interface{} `json:"tool_input"`
+		CWD       string                 `json:"cwd"`
+	}
+	if err := json.Unmarshal(data, &input); err != nil {
+		os.Exit(0) // 파싱 실패 시 허용
+	}
+
+	// 화이트리스트 체크 → 허용
+	if internal.IsWhitelisted(input.ToolName, input.ToolInput) {
+		os.Exit(0)
+	}
+
+	// 화이트리스트에 없음 → GUI 승인 요청
+	root, err := internal.FindWorkspaceRoot()
+	if err != nil {
+		os.Exit(0) // 워크스페이스 없으면 허용
+	}
+
+	permDir := internal.PermissionsDir(root)
+	command := describeToolCall(input.ToolName, input.ToolInput)
+
+	reqID := fmt.Sprintf("%d", time.Now().UnixNano())
+	req := &internal.PermissionRequest{
+		ID:        reqID,
+		Tool:      input.ToolName,
+		Command:   command,
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	if err := internal.WriteRequest(permDir, req); err != nil {
+		os.Exit(0) // 파일 작성 실패 시 허용
+	}
+	defer internal.CleanupPermission(permDir, reqID)
+
+	// 응답 대기 (최대 5분)
+	resp, err := internal.WaitForResponse(permDir, reqID, 5*time.Minute)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "권한 승인 대기 시간 초과")
+		os.Exit(2)
+	}
+
+	if resp.Allowed {
+		os.Exit(0)
+	} else {
+		fmt.Fprintln(os.Stderr, "사용자가 거부했습니다")
+		os.Exit(2)
+	}
+}
+
+func describeToolCall(toolName string, toolInput map[string]interface{}) string {
+	switch toolName {
+	case "Bash":
+		if cmd, ok := toolInput["command"].(string); ok {
+			return cmd
+		}
+	case "Write":
+		if fp, ok := toolInput["file_path"].(string); ok {
+			return fmt.Sprintf("Write: %s", fp)
+		}
+	case "Edit":
+		if fp, ok := toolInput["file_path"].(string); ok {
+			return fmt.Sprintf("Edit: %s", fp)
+		}
+	}
+	return fmt.Sprintf("%s: %v", toolName, toolInput)
 }
