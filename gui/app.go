@@ -448,18 +448,9 @@ func (a *App) RunLeadSession(userInput string) string {
 		runtime.EventsEmit(a.ctx, "log", LogEvent{Type: evtType, Message: msg})
 	}
 
-	// 팀이 없으면 기본 팀 생성 (Lead 세션이 CLI로 관리)
-	if len(a.agents) == 0 {
-		plans := internal.DefaultTeam()
-		var roles []string
-		for _, p := range plans {
-			roles = append(roles, p.Role)
-		}
-		a.workspace.Init(roles)
-		a.workspace.SaveRolePlans(plans)
-		a.rolePlans = plans
-		a.buildTeamFromPlans(plans)
-		runtime.EventsEmit(a.ctx, "team-updated", a.GetAgentStatuses())
+	// .orchestra 디렉토리만 확보 (팀 구성은 Lead 세션이 CLI로 수행)
+	if a.workspace != nil {
+		a.workspace.Init(nil)
 	}
 
 	// CLIPath 자동 탐색
@@ -490,7 +481,11 @@ func (a *App) RunLeadSession(userInput string) string {
 	// 단일 세션 실행
 	result := a.lead.RunLeadSession(userInput, logFn)
 
-	// 상태 갱신
+	// 세션 완료 후 팀 리로드 (Lead가 team set으로 팀을 생성했을 수 있음)
+	if plans := a.workspace.LoadRolePlans(); len(plans) > 0 && len(plans) != len(a.rolePlans) {
+		a.rolePlans = plans
+		a.buildTeamFromPlans(plans)
+	}
 	runtime.EventsEmit(a.ctx, "team-updated", a.GetAgentStatuses())
 
 	return result

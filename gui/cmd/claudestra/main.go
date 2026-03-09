@@ -53,6 +53,7 @@ func printUsage() {
 사용법:
   claudestra status                    팀원 전체 상태 출력
   claudestra team                      팀원 목록 출력
+  claudestra team set <json>           팀 구성 설정
   claudestra session get               세션 메모리 읽기
   claudestra session update <json>     세션 메모리 갱신
   claudestra issues                    미해결 이슈 목록
@@ -117,8 +118,19 @@ func cmdStatus() {
 // ── team ──
 
 func cmdTeam() {
+	// team (인자 없음) → 목록 출력
+	// team set '<json>' → 팀 설정
+	if len(os.Args) >= 3 && os.Args[2] == "set" {
+		cmdTeamSet()
+		return
+	}
+
 	ws := mustWorkspace()
-	plans := mustPlans(ws)
+	plans := ws.LoadRolePlans()
+	if len(plans) == 0 {
+		fmt.Println("[]")
+		return
+	}
 
 	type teamEntry struct {
 		Role        string `json:"role"`
@@ -136,6 +148,59 @@ func cmdTeam() {
 		})
 	}
 	printJSON(entries)
+}
+
+func cmdTeamSet() {
+	if len(os.Args) < 4 {
+		fmt.Fprintln(os.Stderr, "사용법: claudestra team set '<json>'")
+		fmt.Fprintln(os.Stderr, `예시: claudestra team set '[{"role":"developer","description":"개발자","type":"producer","directory":"developer"}]'`)
+		os.Exit(1)
+	}
+
+	jsonStr := os.Args[3]
+	var plans []internal.RolePlan
+	if err := json.Unmarshal([]byte(jsonStr), &plans); err != nil {
+		fmt.Fprintf(os.Stderr, "JSON 파싱 오류: %s\n", err)
+		os.Exit(1)
+	}
+
+	// 유효성 검증
+	for i, p := range plans {
+		if p.Role == "" || p.Directory == "" {
+			fmt.Fprintf(os.Stderr, "오류: plans[%d]에 role 또는 directory가 비어있습니다\n", i)
+			os.Exit(1)
+		}
+		if p.Type != "producer" && p.Type != "consumer" {
+			plans[i].Type = "producer"
+		}
+	}
+
+	ws := mustWorkspace()
+
+	// 디렉토리 생성
+	var roles []string
+	for _, p := range plans {
+		roles = append(roles, p.Role)
+	}
+	ws.Init(roles)
+
+	// 팀 저장
+	if err := ws.SaveRolePlans(plans); err != nil {
+		fmt.Fprintf(os.Stderr, "저장 오류: %s\n", err)
+		os.Exit(1)
+	}
+
+	// 이데아 저장
+	for _, p := range plans {
+		if p.Description != "" {
+			ws.SaveIdea(p.Role, p.Description)
+		}
+	}
+
+	fmt.Printf("팀 구성 완료: %d명\n", len(plans))
+	for _, p := range plans {
+		fmt.Printf("  - %s (%s) → ./%s/\n", p.Role, p.Type, p.Directory)
+	}
 }
 
 // ── session ──
