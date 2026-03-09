@@ -99,9 +99,11 @@ class Workspace:
         self.root        = root
         self.orchestra   = root / ".orchestra"
         self.ideas_dir   = self.orchestra / "ideas"
+        self.locks_dir   = self.orchestra / "locks"
 
         self.orchestra.mkdir(parents=True, exist_ok=True)
         self.ideas_dir.mkdir(parents=True, exist_ok=True)
+        self.locks_dir.mkdir(parents=True, exist_ok=True)
 
     def init(self, agent_roles: list[str]):
         """워크스페이스와 각 에이전트 디렉토리를 초기화합니다."""

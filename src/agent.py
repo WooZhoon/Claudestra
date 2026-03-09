@@ -36,8 +36,9 @@ class Agent:
     claude --print 를 subprocess로 실행하고 결과를 캡처합니다.
     """
 
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig, lock_registry=None):
         self.config  = config
+        self.lock_registry = lock_registry
         self.status  = AgentStatus.IDLE
         self.output  = ""       # 마지막 실행 결과
         self._lock   = threading.Lock()
@@ -56,6 +57,21 @@ class Agent:
         with self._lock:
             self.status = AgentStatus.RUNNING
             self._write_status("RUNNING")
+
+        # 작업 디렉토리 잠금 획득
+        if self.lock_registry:
+            from file_lock import LockConflictError
+            try:
+                self.lock_registry.acquire(
+                    str(self.config.work_dir), self.config.agent_id
+                )
+                print(f"[{self.config.role}] 🔒 잠금 획득: {self.config.work_dir.name}/")
+            except LockConflictError as e:
+                self.status = AgentStatus.ERROR
+                self._write_status("ERROR")
+                self.output = f"LOCK CONFLICT: {e}"
+                print(f"[{self.config.role}] 🔒 잠금 충돌: {e}")
+                return self.output
 
         prompt = self._build_prompt(instruction)
 
@@ -93,6 +109,12 @@ class Agent:
             self.output = "ERROR: 'claude' 명령어를 찾을 수 없습니다. Claude Code가 설치되어 있나요?"
             print(f"[{self.config.role}] ❌ {self.output}")
 
+        finally:
+            # 작업 완료 후 잠금 해제
+            if self.lock_registry:
+                self.lock_registry.release_all(self.config.agent_id)
+                print(f"[{self.config.role}] 🔓 잠금 해제")
+
         return self.output
 
     def run_async(self, instruction: str) -> threading.Thread:
@@ -120,6 +142,11 @@ class Agent:
     def _build_prompt(self, instruction: str) -> str:
         """이데아 + 크로스 참조 경로 + 실제 지시를 합칩니다."""
         parts = [self.config.idea]
+
+        parts.append("""[작업 원칙]
+- 간결하게 핵심만 작성하세요. 전체 코드를 모두 작성하지 마세요.
+- 핵심 구조, 주요 파일, 중요 로직만 구현하세요.
+- 보일러플레이트나 반복적인 코드는 생략하고 주석으로 표시하세요.""")
 
         if self.config.read_refs:
             refs_text = "\n".join(f"  - {p}" for p in self.config.read_refs)

@@ -9,6 +9,7 @@ Orchestra MVP - 메인 진입점
 
 import sys
 import argparse
+import unicodedata
 from pathlib import Path
 
 import yaml
@@ -16,6 +17,7 @@ import yaml
 from agent      import Agent, AgentConfig
 from lead_agent import LeadAgent
 from workspace  import Workspace, CONSUMER_ROLES
+from file_lock  import FileLockRegistry
 
 
 # ── 팩토리: 에이전트 생성 ──────────────────────────────────────────
@@ -24,6 +26,7 @@ def build_team(workspace: Workspace, roles: list[str]) -> tuple[LeadAgent, dict]
     """
     워크스페이스 설정을 기반으로 팀장 + 팀원을 생성합니다.
     """
+    lock_registry = FileLockRegistry(workspace.locks_dir)
     lead = LeadAgent(work_dir=workspace.root)
     agents = {}
 
@@ -43,7 +46,7 @@ def build_team(workspace: Workspace, roles: list[str]) -> tuple[LeadAgent, dict]
             work_dir  = agent_dir,
             read_refs = read_refs,
         )
-        agent = Agent(config)
+        agent = Agent(config, lock_registry=lock_registry)
         agents[role] = agent
         lead.add_agent(agent)
 
@@ -110,14 +113,20 @@ def cmd_run(args):
     # 사용자 입력 루프
     while True:
         print()
-        user_input = input("📝 요청 입력 (종료: q) > ").strip()
-
-        if user_input.lower() in ("q", "quit", "exit"):
-            print("👋 종료합니다.")
+        try:
+            user_input = input("📝 요청 입력 (종료: q) > ")
+        except (EOFError, KeyboardInterrupt):
+            print("\n👋 종료합니다.")
             break
 
-        if not user_input:
-            continue
+        # 보이지 않는 제어 문자 제거 (한글 등 유니코드는 유지)
+        user_input = "".join(ch for ch in user_input if ch == "\n" or not unicodedata.category(ch).startswith("C")).strip()
+
+        if not user_input or user_input.lower() in ("q", "quit", "exit"):
+            if not user_input:
+                continue
+            print("👋 종료합니다.")
+            break
 
         report = lead.process(user_input)
 
@@ -198,6 +207,16 @@ def cmd_status(args):
 
         icon = {"IDLE": "⚪", "RUNNING": "🔵", "DONE": "✅", "ERROR": "❌"}.get(status, "❓")
         print(f"  {icon} {role:<15} [{role_type:<10}]  상태: {status:<10}  이데아: {idea_size}자")
+
+    # 활성 잠금 표시
+    lock_registry = FileLockRegistry(workspace.locks_dir)
+    locks = lock_registry.list_locks()
+    if locks:
+        print()
+        print("🔒 활성 잠금")
+        print("─" * 50)
+        for path, agent_id in locks.items():
+            print(f"  {agent_id:<15} → {path}")
 
     print("─" * 50)
 
