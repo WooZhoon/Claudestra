@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -460,11 +462,9 @@ func (a *App) RunLeadSession(userInput string) string {
 		runtime.EventsEmit(a.ctx, "team-updated", a.GetAgentStatuses())
 	}
 
-	// CLIPath 설정 (빌드된 claudestra 바이너리 위치)
+	// CLIPath 자동 탐색
 	if a.lead.CLIPath == "" {
-		// 기본값: workspace 내 또는 실행파일 옆
-		// 실제 배포 시에는 설정 가능하게 할 것
-		a.lead.CLIPath = "claudestra"
+		a.lead.CLIPath = findCLI()
 	}
 
 	// fsnotify 로그 감시 시작
@@ -506,10 +506,33 @@ func (a *App) SelectDirectory() (string, error) {
 }
 
 func truncate(s string, maxLen int) string {
-	// 줄바꿈 제거 후 truncate
 	s = strings.ReplaceAll(s, "\n", " ")
 	if len(s) > maxLen {
 		return s[:maxLen] + "..."
 	}
 	return s
+}
+
+// findCLI searches for the claudestra binary in common locations.
+func findCLI() string {
+	// 1. PATH에서 찾기
+	if path, err := exec.LookPath("claudestra"); err == nil {
+		return path
+	}
+	// 2. ~/go/bin/ (go install 위치)
+	if home, err := os.UserHomeDir(); err == nil {
+		gobin := filepath.Join(home, "go", "bin", "claudestra")
+		if _, err := os.Stat(gobin); err == nil {
+			return gobin
+		}
+	}
+	// 3. 실행파일 옆
+	if self, err := os.Executable(); err == nil {
+		beside := filepath.Join(filepath.Dir(self), "claudestra")
+		if _, err := os.Stat(beside); err == nil {
+			return beside
+		}
+	}
+	// 폴백: PATH에 있다고 가정
+	return "claudestra"
 }
