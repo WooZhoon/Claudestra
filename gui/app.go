@@ -446,20 +446,9 @@ func (a *App) RunLeadSession(userInput string) string {
 		runtime.EventsEmit(a.ctx, "log", LogEvent{Type: evtType, Message: msg})
 	}
 
-	// 팀이 없으면 기존 방식으로 구성
+	// 팀이 없으면 기본 팀 생성 (Lead 세션이 CLI로 관리)
 	if len(a.agents) == 0 {
-		logFn("[팀장] 🤔 개발 태스크인지 판단 중...")
-		a.lead.SetLogFn(logFn)
-		isDev := a.lead.IsDevTask(userInput)
-		if !isDev {
-			logFn("[팀장] 💬 직접 응답합니다.")
-			reply := a.lead.DirectReply(userInput)
-			a.lead.SaveDirectReply(userInput, reply)
-			a.lead.SetLogFn(nil)
-			return reply
-		}
-		logFn("\n[팀장] 🏗️ 팀을 구성합니다...")
-		plans := a.lead.PlanTeam(userInput)
+		plans := internal.DefaultTeam()
 		var roles []string
 		for _, p := range plans {
 			roles = append(roles, p.Role)
@@ -468,9 +457,7 @@ func (a *App) RunLeadSession(userInput string) string {
 		a.workspace.SaveRolePlans(plans)
 		a.rolePlans = plans
 		a.buildTeamFromPlans(plans)
-		a.lead.SetLogFn(nil)
 		runtime.EventsEmit(a.ctx, "team-updated", a.GetAgentStatuses())
-		logFn(fmt.Sprintf("[팀장] ✅ 팀 구성 완료! %d명", len(plans)))
 	}
 
 	// CLIPath 설정 (빌드된 claudestra 바이너리 위치)

@@ -279,13 +279,13 @@ func (l *LeadAgent) PlanTeam(userInput string) []RolePlan {
 
 	raw := l.callClaude(prompt, 60)
 	if raw == "" {
-		return defaultTeam()
+		return DefaultTeam()
 	}
 
 	jsonStr := extractJSON(raw)
 	var plans []RolePlan
 	if err := json.Unmarshal([]byte(jsonStr), &plans); err != nil {
-		return defaultTeam()
+		return DefaultTeam()
 	}
 
 	// 유효성 검증
@@ -300,12 +300,12 @@ func (l *LeadAgent) PlanTeam(userInput string) []RolePlan {
 		valid = append(valid, p)
 	}
 	if len(valid) == 0 {
-		return defaultTeam()
+		return DefaultTeam()
 	}
 	return valid
 }
 
-func defaultTeam() []RolePlan {
+func DefaultTeam() []RolePlan {
 	return []RolePlan{
 		{Role: "developer", Description: "소프트웨어 개발 전문가입니다.\n담당 디렉토리: ./src/\n프로젝트의 핵심 코드를 작성합니다.", Type: "producer", Directory: "src"},
 		{Role: "reviewer", Description: "코드 리뷰 전문가입니다.\n읽기 전용으로 다른 팀원의 코드를 참조합니다.\n담당 디렉토리: ./reviewer/", Type: "consumer", Directory: "reviewer"},
