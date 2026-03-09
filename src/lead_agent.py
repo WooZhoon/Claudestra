@@ -26,6 +26,7 @@ class LeadAgent:
 2. 각 팀원의 역할에 맞게 태스크를 분해합니다.
 3. 팀원들의 결과물을 취합하여 최종 보고를 작성합니다.
 
+중요: 개발 태스크가 아닌 경우(인사, 잡담, 질문 등)에는 빈 배열 []을 반환하세요.
 반드시 JSON 형식으로만 응답하세요. 다른 텍스트는 포함하지 마세요."""
 
     def __init__(self, work_dir: Path):
@@ -62,8 +63,11 @@ class LeadAgent:
         # 1단계: 태스크 분해
         print("\n[팀장] 📋 태스크 분해 중...")
         tasks = self._decompose(user_input)
-        if not tasks:
+        if tasks is None:
             return "태스크 분해에 실패했습니다."
+        if len(tasks) == 0:
+            print("[팀장] 💬 개발 태스크가 아닙니다. 팀장이 직접 응답합니다.")
+            return self._direct_reply(user_input)
 
         print(f"[팀장] 총 {len(tasks)}개 태스크 생성:")
         for t in tasks:
@@ -105,18 +109,21 @@ class LeadAgent:
 [사용자 요구사항]
 {user_input}
 
-위 요구사항을 팀원들에게 배분할 태스크 목록으로 분해하세요.
-각 팀원의 역할에 맞는 구체적인 지시를 작성하세요.
-parallel이 true면 다른 태스크와 동시에 실행, false면 직전 태스크 완료 후 실행합니다.
+중요 규칙:
+- 개발/구현/설계 등 실제 작업이 필요한 요청만 태스크로 분해하세요.
+- 인사, 잡담, 단순 질문 등 개발 태스크가 아닌 경우 반드시 빈 배열 []만 반환하세요.
+- "안녕", "뭐해?", "고마워" 같은 입력에는 절대 태스크를 생성하지 마세요. []를 반환하세요.
 
-반드시 아래 JSON 배열 형식으로만 응답하세요:
+개발 태스크인 경우에만 아래 형식으로 응답하세요:
 [
   {{
     "agent_id": "팀원ID",
     "instruction": "구체적인 지시 내용",
     "parallel": true
   }}
-]"""
+]
+
+parallel이 true면 다른 태스크와 동시에 실행, false면 직전 태스크 완료 후 실행합니다."""
 
         try:
             result = subprocess.run(
@@ -135,6 +142,10 @@ parallel이 true면 다른 태스크와 동시에 실행, false면 직전 태스
             # JSON 블록 추출 (```json ... ``` 감싸진 경우도 처리)
             raw = re.sub(r"```json\s*|\s*```", "", raw).strip()
             tasks = json.loads(raw)
+
+            # 빈 배열이면 그대로 반환 (개발 태스크 아님)
+            if isinstance(tasks, list) and len(tasks) == 0:
+                return []
 
             # agent_id 유효성 검사
             valid_ids = set(self.agents.keys())
@@ -156,6 +167,32 @@ parallel이 true면 다른 태스크와 동시에 실행, false면 직전 태스
             }
             for agent_id, agent in self.agents.items()
         ]
+
+    # ── 내부: 팀장 직접 응답 ────────────────────────────────────
+
+    def _direct_reply(self, user_input: str) -> str:
+        """개발 태스크가 아닌 경우 팀장이 직접 응답합니다."""
+        prompt = f"""당신은 소프트웨어 개발 팀의 팀장입니다.
+사용자의 메시지에 친절하게 한국어로 응답하세요.
+개발 관련 요청이 필요하면 어떤 것을 도와줄 수 있는지 안내해주세요.
+
+[사용자 메시지]
+{user_input}"""
+
+        try:
+            result = subprocess.run(
+                ["claude", "--print", "--dangerously-skip-permissions", prompt],
+                cwd=str(self.work_dir),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except FileNotFoundError:
+            pass
+
+        return "안녕하세요! 개발 관련 요청을 입력해주시면 팀원들에게 배분하여 처리하겠습니다."
 
     # ── 내부: 태스크 실행 ──────────────────────────────────────
 
