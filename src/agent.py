@@ -83,10 +83,10 @@ class Agent:
             cmd = ["claude", "--print", "--dangerously-skip-permissions"]
             if self.config.allowed_tools:
                 cmd += ["--allowedTools", ",".join(self.config.allowed_tools)]
-            cmd.append(prompt)
 
             result = subprocess.run(
                 cmd,
+                input=prompt,
                 cwd=str(self.config.work_dir),
                 capture_output=True,
                 text=True,
