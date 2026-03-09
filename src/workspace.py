@@ -99,11 +99,13 @@ class Workspace:
         self.root        = root
         self.orchestra   = root / ".orchestra"
         self.ideas_dir   = self.orchestra / "ideas"
-        self.locks_dir   = self.orchestra / "locks"
+        self.locks_dir     = self.orchestra / "locks"
+        self.contracts_dir = self.orchestra / "contracts"
 
         self.orchestra.mkdir(parents=True, exist_ok=True)
         self.ideas_dir.mkdir(parents=True, exist_ok=True)
         self.locks_dir.mkdir(parents=True, exist_ok=True)
+        self.contracts_dir.mkdir(parents=True, exist_ok=True)
 
     def init(self, agent_roles: list[str]):
         """워크스페이스와 각 에이전트 디렉토리를 초기화합니다."""
@@ -158,6 +160,18 @@ class Workspace:
             for role in roles
             if role not in CONSUMER_ROLES and role != exclude_role
         ]
+
+    def save_contract(self, content: str):
+        """인터페이스 계약서를 저장합니다."""
+        contract_file = self.contracts_dir / "contract.yaml"
+        contract_file.write_text(content)
+
+    def load_contract(self) -> str:
+        """최신 인터페이스 계약서를 로드합니다."""
+        contract_file = self.contracts_dir / "contract.yaml"
+        if contract_file.exists():
+            return contract_file.read_text().strip()
+        return ""
 
     def is_consumer(self, role: str) -> bool:
         return role in CONSUMER_ROLES

@@ -28,6 +28,7 @@ class AgentConfig:
     idea:       str          # 시스템 프롬프트 (이데아)
     work_dir:   Path
     read_refs:  list[Path] = field(default_factory=list)  # 읽기 전용 참조 경로
+    contract:   str = ""     # 인터페이스 계약서
 
 
 class Agent:
@@ -147,6 +148,9 @@ class Agent:
 - 간결하게 핵심만 작성하세요. 전체 코드를 모두 작성하지 마세요.
 - 핵심 구조, 주요 파일, 중요 로직만 구현하세요.
 - 보일러플레이트나 반복적인 코드는 생략하고 주석으로 표시하세요.""")
+
+        if self.config.contract:
+            parts.append(f"[인터페이스 계약서 — 반드시 이 명세를 따르세요]\n{self.config.contract}")
 
         if self.config.read_refs:
             refs_text = "\n".join(f"  - {p}" for p in self.config.read_refs)

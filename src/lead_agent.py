@@ -69,8 +69,14 @@ class LeadAgent:
             print("[팀장] 💬 개발 태스크가 아닙니다. 팀장이 직접 응답합니다.")
             return self._direct_reply(user_input)
 
-        # 2단계: 계획 표시 & 사용자 승인
+        # 2단계: 인터페이스 계약서 생성
+        print("\n[팀장] 📜 인터페이스 계약서 작성 중...")
+        contract = self._generate_contract(user_input, plan)
+
+        # 3단계: 계획 + 계약서 표시 & 사용자 승인
         self._print_plan(plan)
+        if contract:
+            self._print_contract(contract)
         approval = input("\n진행할까요? (y: 전체 실행 / s: 단계별 확인 / n: 취소) > ").strip().lower()
 
         if approval == "n":
@@ -78,7 +84,13 @@ class LeadAgent:
 
         step_by_step = (approval == "s")
 
-        # 3단계: 단계별 실행
+        # 계약서 저장 & 에이전트에 주입
+        if contract:
+            self._save_contract(contract)
+            for agent in self.agents.values():
+                agent.config.contract = contract
+
+        # 4단계: 단계별 실행
         all_results: dict[str, str] = {}
         for step in plan:
             step_num   = step.get("step", "?")
@@ -236,6 +248,70 @@ class LeadAgent:
                 ],
             }
         ]
+
+    # ── 내부: 인터페이스 계약서 ──────────────────────────────────
+
+    def _generate_contract(self, user_input: str, plan: list[dict]) -> str | None:
+        """팀원들이 공유할 인터페이스 계약서를 생성합니다."""
+        agent_list = json.dumps(self.list_agents(), ensure_ascii=False, indent=2)
+        plan_text = json.dumps(plan, ensure_ascii=False, indent=2)
+
+        prompt = f"""당신은 소프트웨어 아키텍트입니다.
+아래 프로젝트 계획을 보고, 모든 팀원이 따라야 할 인터페이스 계약서를 YAML 형식으로 작성하세요.
+
+[사용자 요구사항]
+{user_input}
+
+[실행 계획]
+{plan_text}
+
+[팀원 목록]
+{agent_list}
+
+계약서에 반드시 포함할 내용:
+1. tech_stack: 사용할 언어, 프레임워크, DB 엔진
+2. naming_conventions: 필드명 규칙 (camelCase/snake_case), 언어 (한글/영문)
+3. api_endpoints: 주요 엔드포인트 목록 (method, path, request/response 필드명)
+4. db_schema: 주요 테이블/컬렉션과 필드명
+5. shared_types: 공유 타입 정의 (예: User, Course 등)
+
+규칙:
+- 간결하게 핵심만 작성하세요. 50줄 이내로.
+- YAML만 출력하세요. 마크다운 펜스(```)나 설명 텍스트는 포함하지 마세요."""
+
+        try:
+            result = subprocess.run(
+                ["claude", "--print", "--dangerously-skip-permissions", prompt],
+                cwd=str(self.work_dir),
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode == 0:
+                raw = result.stdout.strip()
+                raw = re.sub(r"```ya?ml\s*|\s*```", "", raw).strip()
+                return raw
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        print("[팀장] ⚠️  계약서 생성 실패, 계약서 없이 진행합니다.")
+        return None
+
+    def _print_contract(self, contract: str):
+        """인터페이스 계약서를 표시합니다."""
+        print(f"\n{'='*60}")
+        print("📜 인터페이스 계약서")
+        print(f"{'='*60}")
+        print(contract)
+        print(f"{'='*60}")
+
+    def _save_contract(self, contract: str):
+        """계약서를 파일로 저장합니다."""
+        contracts_dir = self.work_dir / ".orchestra" / "contracts"
+        contracts_dir.mkdir(parents=True, exist_ok=True)
+        contract_file = contracts_dir / "contract.yaml"
+        contract_file.write_text(contract)
+        print(f"[팀장] 📜 계약서 저장: {contract_file}")
 
     # ── 내부: 팀장 직접 응답 ────────────────────────────────────
 
