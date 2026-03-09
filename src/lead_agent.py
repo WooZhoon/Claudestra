@@ -34,6 +34,9 @@ class LeadAgent:
         self.agents: dict[str, Agent] = {}
         self.work_dir.mkdir(parents=True, exist_ok=True)
 
+        # 대화 메모리: 마지막 실행 컨텍스트 (토큰 절약을 위해 요약만 저장)
+        self._last_context: str | None = None   # 이전 보고서 핵심 요약
+
     # ── 팀원 관리 ──────────────────────────────────────────────
 
     def add_agent(self, agent: Agent):
@@ -141,6 +144,44 @@ class LeadAgent:
                 print(f"     [{agent_id}] {desc}...")
         print(f"\n{'='*60}")
 
+    # ── 내부: 대화 메모리 ──────────────────────────────────────
+
+    def _save_context(self, user_input: str, report: str):
+        """보고서에서 핵심 요약만 추출하여 컨텍스트로 저장합니다."""
+        # 보고서를 간결하게 요약 (토큰 절약)
+        prompt = f"""아래 보고서에서 핵심 정보만 추출하여 5줄 이내로 요약하세요.
+반드시 포함: 1) 무엇을 만들었는지 2) 해결이 필요한 문제 목록 3) 다음에 해야 할 일
+다른 텍스트 없이 요약만 출력하세요.
+
+[사용자 요청]
+{user_input}
+
+[보고서]
+{report[:2000]}"""
+
+        try:
+            result = subprocess.run(
+                ["claude", "--print", "--dangerously-skip-permissions", prompt],
+                cwd=str(self.work_dir),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode == 0:
+                self._last_context = result.stdout.strip()
+                return
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # 폴백: 보고서 앞부분만 저장
+        self._last_context = f"[이전 요청: {user_input}]\n{report[:500]}"
+
+    def _build_context_block(self) -> str:
+        """이전 대화 컨텍스트를 프롬프트 블록으로 반환합니다."""
+        if not self._last_context:
+            return ""
+        return f"\n[이전 작업 컨텍스트 — 사용자가 이전 작업을 참조할 수 있습니다]\n{self._last_context}\n"
+
     # ── 내부: 태스크 분해 ──────────────────────────────────────
 
     def _decompose(self, user_input: str) -> list[dict]:
@@ -158,11 +199,13 @@ class LeadAgent:
         """
         agent_list = json.dumps(self.list_agents(), ensure_ascii=False, indent=2)
 
+        context_block = self._build_context_block()
+
         prompt = f"""{self.IDEA}
 
 [현재 팀원 목록]
 {agent_list}
-
+{context_block}
 [사용자 요구사항]
 {user_input}
 
@@ -170,6 +213,7 @@ class LeadAgent:
 - 개발/구현/설계 등 실제 작업이 필요한 요청만 태스크로 분해하세요.
 - 인사, 잡담, 단순 질문 등 개발 태스크가 아닌 경우 반드시 빈 배열 []만 반환하세요.
 - "안녕", "뭐해?", "고마워" 같은 입력에는 절대 태스크를 생성하지 마세요. []를 반환하세요.
+- 단, "이전 작업 컨텍스트"가 있고, 사용자가 "고쳐줘", "수정해", "해결해" 등 이전 작업을 참조하는 경우에는 개발 태스크입니다. 컨텍스트의 문제점을 기반으로 태스크를 분해하세요.
 
 작업 계획 규칙:
 - 큰 작업은 여러 단계(step)로 나누세요. 각 단계는 작고 명확해야 합니다.
@@ -317,10 +361,12 @@ class LeadAgent:
 
     def _direct_reply(self, user_input: str) -> str:
         """개발 태스크가 아닌 경우 팀장이 직접 응답합니다."""
+        context_block = self._build_context_block()
+
         prompt = f"""당신은 소프트웨어 개발 팀의 팀장입니다.
 사용자의 메시지에 친절하게 한국어로 응답하세요.
 개발 관련 요청이 필요하면 어떤 것을 도와줄 수 있는지 안내해주세요.
-
+{context_block}
 [사용자 메시지]
 {user_input}"""
 
@@ -400,9 +446,13 @@ class LeadAgent:
                 timeout=120,
             )
             if result.returncode == 0:
-                return result.stdout.strip()
+                report = result.stdout.strip()
+                self._save_context(user_input, report)
+                return report
         except FileNotFoundError:
             pass
 
         # 폴백: 단순 결합
-        return f"[팀원 결과 요약]\n\n{results_text}"
+        fallback = f"[팀원 결과 요약]\n\n{results_text}"
+        self._save_context(user_input, fallback)
+        return fallback
