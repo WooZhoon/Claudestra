@@ -58,6 +58,24 @@ export default function App() {
     scheduleFlush();
   }, [scheduleFlush]);
 
+  const appendLog = useCallback((text: string) => {
+    // 마지막 pending 항목에 이어붙이기, 없으면 마지막 로그에
+    if (pendingLogs.current.length > 0) {
+      const last = pendingLogs.current[pendingLogs.current.length - 1];
+      last.message += text;
+    } else {
+      // pending이 비어있으면 기존 로그의 마지막 항목 업데이트
+      setLogs(prev => {
+        if (prev.length === 0) return prev;
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        updated[updated.length - 1] = { ...last, message: last.message + text };
+        return updated;
+      });
+    }
+    scheduleFlush();
+  }, [scheduleFlush]);
+
   // 실시간 이벤트 수신
   useEffect(() => {
     const cancelLog = EventsOn('log', (evt: LogEvent | string) => {
@@ -68,17 +86,21 @@ export default function App() {
         addLog((evt.type || 'text') as LogEntry['type'], evt.message);
       }
     });
+    const cancelAppend = EventsOn('log-append', (text: string) => {
+      appendLog(text);
+    });
     const cancelTeam = EventsOn('team-updated', (statuses: AgentStatus[]) => {
       if (statuses) setAgents(statuses);
     });
     return () => {
       cancelLog();
+      cancelAppend();
       cancelTeam();
       if (flushTimer.current !== null) {
         cancelAnimationFrame(flushTimer.current);
       }
     };
-  }, [addLog]);
+  }, [addLog, appendLog]);
 
   const refreshStatuses = useCallback(async () => {
     try {

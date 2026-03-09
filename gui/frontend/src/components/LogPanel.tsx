@@ -67,6 +67,11 @@ export default memo(function LogPanel({ logs }: LogPanelProps) {
   );
 });
 
+// 🔧 이모지가 포함된 메시지인지 체크
+function isToolUseEntry(entry: LogEntry): boolean {
+  return entry.message.includes('🔧');
+}
+
 function ThinkingGroup({
   entries,
   collapsed,
@@ -76,6 +81,14 @@ function ThinkingGroup({
   collapsed: boolean;
   onToggle: () => void;
 }) {
+  const thinkingCount = entries.filter(e => !isToolUseEntry(e)).length;
+  const toolCount = entries.filter(e => isToolUseEntry(e)).length;
+
+  let label = `💭 사고 과정 (${thinkingCount}개 청크)`;
+  if (toolCount > 0) {
+    label = `💭 사고 과정 (${thinkingCount}개 청크, 🔧 ${toolCount}개 도구 호출)`;
+  }
+
   return (
     <div style={{
       margin: '4px 0',
@@ -101,7 +114,7 @@ function ThinkingGroup({
         }}>
           ▶
         </span>
-        💭 사고 과정 ({entries.length}개 청크)
+        {label}
       </div>
       {!collapsed && (
         <div style={{
@@ -110,16 +123,42 @@ function ThinkingGroup({
           background: 'rgba(124, 140, 200, 0.05)',
           borderRadius: 4,
           fontSize: 12,
-          color: 'var(--text-muted)',
-          fontStyle: 'italic',
           maxHeight: 200,
           overflowY: 'auto',
         }}>
-          {entries.map((e, i) => (
-            <span key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-              {e.message.replace(/^.*?💭\s*/, '')}
-            </span>
-          ))}
+          {entries.map((e, i) => {
+            if (isToolUseEntry(e)) {
+              // 도구 호출: 다른 스타일로 표시
+              const toolMsg = e.message.replace(/^.*?🔧\s*/, '🔧 ');
+              return (
+                <div key={i} style={{
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  color: 'var(--accent)',
+                  fontStyle: 'normal',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: 11,
+                  padding: '2px 6px',
+                  margin: '4px 0',
+                  background: 'rgba(124, 140, 200, 0.08)',
+                  borderRadius: 3,
+                }}>
+                  {toolMsg}
+                </div>
+              );
+            }
+            // thinking: 이탤릭
+            return (
+              <div key={i} style={{
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                color: 'var(--text-muted)',
+                fontStyle: 'italic',
+              }}>
+                {e.message.replace(/^.*?💭\s*/, '')}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

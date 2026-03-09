@@ -171,8 +171,13 @@ func (a *App) PlanRequest(userInput string) (*ProposalInfo, error) {
 	}
 
 	logFn := func(msg string) {
+		// \x01 prefix = append to last log entry
+		if len(msg) > 0 && msg[0] == '\x01' {
+			runtime.EventsEmit(a.ctx, "log-append", msg[1:])
+			return
+		}
 		evtType := "text"
-		if strings.Contains(msg, "💭") {
+		if strings.Contains(msg, "💭") || strings.Contains(msg, "🔧") {
 			evtType = "thinking"
 		}
 		runtime.EventsEmit(a.ctx, "log", LogEvent{Type: evtType, Message: msg})
@@ -261,8 +266,13 @@ func (a *App) ExecutePlan() string {
 	}
 
 	logFn := func(msg string) {
+		// \x01 prefix = append to last log entry
+		if len(msg) > 0 && msg[0] == '\x01' {
+			runtime.EventsEmit(a.ctx, "log-append", msg[1:])
+			return
+		}
 		evtType := "text"
-		if strings.Contains(msg, "💭") {
+		if strings.Contains(msg, "💭") || strings.Contains(msg, "🔧") {
 			evtType = "thinking"
 		}
 		runtime.EventsEmit(a.ctx, "log", LogEvent{Type: evtType, Message: msg})
@@ -298,8 +308,13 @@ func (a *App) SubmitRequest(userInput string) string {
 	}
 
 	logFn := func(msg string) {
+		// \x01 prefix = append to last log entry
+		if len(msg) > 0 && msg[0] == '\x01' {
+			runtime.EventsEmit(a.ctx, "log-append", msg[1:])
+			return
+		}
 		evtType := "text"
-		if strings.Contains(msg, "💭") {
+		if strings.Contains(msg, "💭") || strings.Contains(msg, "🔧") {
 			evtType = "thinking"
 		}
 		runtime.EventsEmit(a.ctx, "log", LogEvent{Type: evtType, Message: msg})

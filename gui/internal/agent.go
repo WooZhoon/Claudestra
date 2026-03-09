@@ -136,14 +136,39 @@ func (a *Agent) Run(instruction string, onStream ...func(string)) string {
 
 	go func() {
 		defer close(done)
+		textStarted := false
+		thinkStarted := false
 		ParseStream(stdout, StreamCallbacks{
 			OnText: func(text string) {
-				log(fmt.Sprintf("[%s] %s", a.Config.Role, text))
+				thinkStarted = false
+				if !textStarted {
+					log(fmt.Sprintf("[%s] %s", a.Config.Role, text))
+					textStarted = true
+				} else {
+					log("\x01" + text)
+				}
 			},
 			OnThinking: func(text string) {
-				log(fmt.Sprintf("[%s] 💭 %s", a.Config.Role, text))
+				textStarted = false
+				if !thinkStarted {
+					log(fmt.Sprintf("[%s] 💭 %s", a.Config.Role, text))
+					thinkStarted = true
+				} else {
+					log("\x01" + text)
+				}
+			},
+			OnToolUse: func(toolName string, input string) {
+				textStarted = false
+				thinkStarted = false
+				msg := fmt.Sprintf("[%s] 🔧 %s", a.Config.Role, toolName)
+				if input != "" {
+					msg += ": " + input
+				}
+				log(msg)
 			},
 			OnResult: func(result string) {
+				textStarted = false
+				thinkStarted = false
 				fullResult = result
 			},
 		})

@@ -1034,19 +1034,47 @@ func (l *LeadAgent) callClaudeStream(prompt string, timeoutSec int, tools []stri
 	}
 
 	var fullResult string
+	textStarted := false
+	thinkStarted := false
 	ParseStream(stdout, StreamCallbacks{
 		OnText: func(text string) {
+			thinkStarted = false
 			if onText != nil {
-				onText(text)
+				if !textStarted {
+					onText(text)
+					textStarted = true
+				} else {
+					if l.activeLogFn != nil {
+						l.activeLogFn("\x01" + text)
+					}
+				}
 			}
 		},
 		OnThinking: func(text string) {
-			// thinking은 항상 activeLogFn으로 전달
+			textStarted = false
 			if l.activeLogFn != nil {
-				l.activeLogFn("  💭 " + text)
+				if !thinkStarted {
+					l.activeLogFn("  💭 " + text)
+					thinkStarted = true
+				} else {
+					l.activeLogFn("\x01" + text)
+				}
+			}
+		},
+		OnToolUse: func(toolName string, input string) {
+			textStarted = false
+			thinkStarted = false
+			if l.activeLogFn != nil {
+				msg := "  🔧 " + toolName
+				if input != "" {
+					msg += ": " + input
+				}
+				l.activeLogFn(msg)
 			}
 		},
 		OnResult: func(result string) {
+			textStarted = false
+			thinkStarted = false
 			fullResult = result
 		},
 	})
