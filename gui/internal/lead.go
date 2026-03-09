@@ -557,7 +557,7 @@ func (l *LeadAgent) refreshProjectSummary(userInput, report string) {
 [이번 결과 보고서]
 %s`, currentSummary, userInput, truncReport)
 
-	result := l.callClaude(prompt, 60)
+	result := l.callClaudeTextOnly(prompt, 60)
 	if result != "" {
 		l.session.ProjectSummary = result
 	}
@@ -589,7 +589,7 @@ func (l *LeadAgent) extractIssues(results map[string]string) {
 [리뷰 결과]
 %s`, truncOutput)
 
-		raw := l.callClaude(prompt, 60)
+		raw := l.callClaudeTextOnly(prompt, 60)
 		if raw == "" {
 			continue
 		}
@@ -856,7 +856,7 @@ func (l *LeadAgent) DirectReply(userInput string) string {
 [사용자 메시지]
 %s`, contextBlock, userInput)
 
-	result := l.callClaude(prompt, 60)
+	result := l.callClaudeInteract(prompt, 60)
 	if result != "" {
 		return result
 	}
@@ -925,7 +925,7 @@ func (l *LeadAgent) summarize(userInput string, results map[string]string, logFn
 
 형식으로 한국어 보고서를 작성하세요.`, userInput, resultsText)
 
-	report := l.callClaude(prompt, 120)
+	report := l.callClaudeTextOnly(prompt, 120)
 
 	if report != "" {
 		l.updateSession(userInput, results, report)
@@ -938,10 +938,56 @@ func (l *LeadAgent) summarize(userInput string, results map[string]string, logFn
 }
 
 // ── Claude CLI 호출 헬퍼 ──
+//
+// 팀장의 도구 권한은 용도별로 분리됩니다:
+//   - 읽기 전용 (계획 수립): Read, Glob, Grep — 프로젝트 구조 탐색만 가능
+//   - 대화용 (DirectReply):  Read, Glob, Grep, Bash — 탐색 + 명령 실행
+//   - 텍스트 전용 (요약 등): 도구 없음 — 순수 텍스트 생성만
+// 모든 호출은 cmd.Dir = WorkDir(프로젝트 디렉토리)로 고정됩니다.
 
-// callClaudeBlocking: 항상 블로킹 (폴백 전용, 재귀 방지)
-func (l *LeadAgent) callClaudeBlocking(prompt string) string {
-	cmd := exec.Command("claude", "--print", "--dangerously-skip-permissions")
+// 팀장 도구 세트
+var (
+	leadToolsReadOnly = []string{"Read", "Glob", "Grep"}                 // 계획 수립용
+	leadToolsInteract = []string{"Read", "Glob", "Grep", "Bash"}         // 대화/탐색용
+	leadToolsNone     []string                                            // 텍스트 생성 전용
+)
+
+// callClaude: 읽기 전용 도구로 호출 (계획 수립, 계약서 생성, IsDevTask 등)
+func (l *LeadAgent) callClaude(prompt string, timeoutSec int) string {
+	return l.callClaudeWith(prompt, timeoutSec, leadToolsReadOnly)
+}
+
+// callClaudeInteract: 대화용 도구로 호출 (DirectReply 등)
+func (l *LeadAgent) callClaudeInteract(prompt string, timeoutSec int) string {
+	return l.callClaudeWith(prompt, timeoutSec, leadToolsInteract)
+}
+
+// callClaudeTextOnly: 도구 없이 순수 텍스트 생성 (요약, 이슈 추출 등)
+func (l *LeadAgent) callClaudeTextOnly(prompt string, timeoutSec int) string {
+	return l.callClaudeWith(prompt, timeoutSec, leadToolsNone)
+}
+
+// callClaudeWith: 지정된 도구 세트로 Claude CLI 호출
+func (l *LeadAgent) callClaudeWith(prompt string, timeoutSec int, tools []string) string {
+	if l.activeLogFn != nil {
+		return l.callClaudeStream(prompt, timeoutSec, tools, func(text string) {
+			l.activeLogFn("  " + text)
+		})
+	}
+	return l.callClaudeBlocking(prompt, tools)
+}
+
+// callClaudeBlocking: 블로킹 호출 (폴백 전용)
+func (l *LeadAgent) callClaudeBlocking(prompt string, tools []string) string {
+	args := []string{"--print", "--dangerously-skip-permissions"}
+	if len(tools) > 0 {
+		args = append(args, "--allowedTools", strings.Join(tools, ","))
+	} else if tools != nil {
+		// tools가 빈 슬라이스(명시적 "도구 없음") → 아무 도구도 허용하지 않음
+		args = append(args, "--allowedTools", "")
+	}
+
+	cmd := exec.Command("claude", args...)
 	cmd.Dir = l.WorkDir
 	cmd.Stdin = strings.NewReader(prompt)
 
@@ -952,37 +998,32 @@ func (l *LeadAgent) callClaudeBlocking(prompt string) string {
 	return strings.TrimSpace(string(output))
 }
 
-// callClaude: activeLogFn이 있으면 streaming으로 사고 과정을 보여주면서 결과 리턴.
-// 없으면 블로킹.
-func (l *LeadAgent) callClaude(prompt string, timeoutSec int) string {
-	if l.activeLogFn != nil {
-		return l.callClaudeStream(prompt, timeoutSec, func(text string) {
-			l.activeLogFn("  " + text)
-		})
-	}
-	return l.callClaudeBlocking(prompt)
-}
-
-// callClaudeStream: 실시간 스트리밍 (사용자 대면 응답용)
-// --output-format stream-json + --include-partial-messages 로 토큰 단위 스트리밍
-func (l *LeadAgent) callClaudeStream(prompt string, timeoutSec int, onText func(string)) string {
-	cmd := exec.Command("claude", "-p",
+// callClaudeStream: 실시간 스트리밍
+func (l *LeadAgent) callClaudeStream(prompt string, timeoutSec int, tools []string, onText func(string)) string {
+	args := []string{"-p",
 		"--output-format", "stream-json",
 		"--include-partial-messages",
 		"--verbose",
 		"--dangerously-skip-permissions",
-	)
+	}
+	if len(tools) > 0 {
+		args = append(args, "--allowedTools", strings.Join(tools, ","))
+	} else if tools != nil {
+		args = append(args, "--allowedTools", "")
+	}
+
+	cmd := exec.Command("claude", args...)
 	cmd.Dir = l.WorkDir
 	cmd.Stdin = strings.NewReader(prompt)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return l.callClaudeBlocking(prompt)
+		return l.callClaudeBlocking(prompt, tools)
 	}
 	cmd.Stderr = nil
 
 	if err := cmd.Start(); err != nil {
-		return l.callClaudeBlocking(prompt)
+		return l.callClaudeBlocking(prompt, tools)
 	}
 
 	var fullResult string
