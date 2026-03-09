@@ -10,6 +10,7 @@ import (
 
 	"gui/internal"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -492,6 +493,38 @@ func (a *App) RunLeadSession(userInput string) string {
 		logFn(fmt.Sprintf("[팀장] ⚠️ 로그 감시 시작 실패: %s", err))
 	}
 	defer watcher.Stop()
+
+	// team.json 변경 감시 → 사이드바 즉시 업데이트
+	teamWatcher, err := fsnotify.NewWatcher()
+	if err == nil {
+		teamWatcher.Add(a.workspace.OrchestraDir)
+		teamStop := make(chan struct{})
+		go func() {
+			for {
+				select {
+				case <-teamStop:
+					return
+				case event, ok := <-teamWatcher.Events:
+					if !ok {
+						return
+					}
+					if (event.Has(fsnotify.Write) || event.Has(fsnotify.Create)) &&
+						strings.HasSuffix(event.Name, "team.json") {
+						if plans := a.workspace.LoadRolePlans(); len(plans) > 0 {
+							a.rolePlans = plans
+							a.buildTeamFromPlans(plans)
+							runtime.EventsEmit(a.ctx, "team-updated", a.GetAgentStatuses())
+						}
+					}
+				case <-teamWatcher.Errors:
+				}
+			}
+		}()
+		defer func() {
+			close(teamStop)
+			teamWatcher.Close()
+		}()
+	}
 
 	// 단일 세션 실행
 	result := a.lead.RunLeadSession(userInput, logFn)
