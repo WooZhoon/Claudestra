@@ -4,6 +4,7 @@ import MarkdownRenderer from './MarkdownRenderer';
 export interface LogEntry {
   type: 'text' | 'thinking' | 'status';
   message: string;
+  agent?: string; // agent name (empty/undefined = lead)
 }
 
 interface LogPanelProps {
@@ -25,8 +26,11 @@ export default memo(function LogPanel({ logs }: LogPanelProps) {
     }
   }, [logs]);
 
+  // 서브에이전트 메시지 제외 (팀장만 표시)
+  const leadLogs = logs.filter(l => !l.agent);
+
   // 연속된 thinking 항목을 그룹화
-  const grouped = groupLogs(logs);
+  const grouped = groupLogs(leadLogs);
 
   // thinking 그룹 인덱스 카운터
   let thinkingGroupIdx = 0;
@@ -226,8 +230,8 @@ function groupLogs(logs: LogEntry[]): GroupedItem[] {
 
 function getLogColor(msg: string): string {
   if (msg.includes('❌')) return 'var(--error)';
-  if (msg.includes('✅') || msg.includes('완료')) return 'var(--success)';
-  if (msg.includes('📌') || msg.includes('📋')) return 'var(--accent)';
   if (msg.includes('⚠️')) return 'var(--warning)';
-  return 'var(--text-secondary)';
+  // 상태 메시지만 특별 색상, 나머지는 기본 텍스트색
+  if (msg.startsWith('✅') || msg.startsWith('📝')) return 'var(--accent)';
+  return 'var(--text-primary)';
 }

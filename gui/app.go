@@ -19,6 +19,7 @@ import (
 type LogEvent struct {
 	Type    string `json:"type"`    // "text", "thinking", "status"
 	Message string `json:"message"`
+	Agent   string `json:"agent"`   // agent name (empty = lead)
 }
 
 type App struct {
@@ -42,10 +43,16 @@ func (a *App) startup(ctx context.Context) {
 // ── Project Management ──
 
 func (a *App) InitProject(projectDir string) error {
-	a.workspace = internal.NewWorkspace(projectDir)
+	ws := internal.NewWorkspace(projectDir)
+	a.workspace = ws
 	a.lead = internal.NewLeadAgent(projectDir)
 	a.agents = make(map[string]*internal.Agent)
-	a.rolePlans = nil
+
+	// 기존 팀이 있으면 복원
+	a.rolePlans = ws.LoadRolePlans()
+	if len(a.rolePlans) > 0 {
+		a.buildTeamFromPlans(a.rolePlans)
+	}
 	return nil
 }
 
@@ -288,10 +295,19 @@ func readJSONLEntries(path string) ([]internal.LogEntry, error) {
 func (a *App) GetAgentStatuses() []AgentStatusInfo {
 	var statuses []AgentStatusInfo
 	for _, agent := range a.agents {
+		// 디스크에서 최신 상태 읽기 (.agent-status 파일)
+		status := string(agent.Status)
+		statusFile := filepath.Join(agent.Config.WorkDir, ".agent-status")
+		if data, err := os.ReadFile(statusFile); err == nil {
+			if s := strings.TrimSpace(string(data)); s != "" {
+				status = s
+				agent.Status = internal.AgentStatus(s)
+			}
+		}
 		statuses = append(statuses, AgentStatusInfo{
 			ID:         agent.Config.AgentID,
 			Role:       agent.Config.Role,
-			Status:     string(agent.Status),
+			Status:     status,
 			IsConsumer: agent.Config.IsConsumer,
 		})
 	}
@@ -317,7 +333,7 @@ func (a *App) RunLeadSession(userInput string) string {
 
 	logFn := func(msg string) {
 		if len(msg) > 0 && msg[0] == '\x01' {
-			runtime.EventsEmit(a.ctx, "log-append", msg[1:])
+			runtime.EventsEmit(a.ctx, "log-append", LogEvent{Message: msg[1:], Agent: ""})
 			return
 		}
 		evtType := "text"
@@ -351,20 +367,20 @@ func (a *App) RunLeadSession(userInput string) string {
 		switch entry.Type {
 		case "thinking":
 			if isContinuation {
-				runtime.EventsEmit(a.ctx, "log-append", entry.Message)
+				runtime.EventsEmit(a.ctx, "log-append", LogEvent{Message: entry.Message, Agent: entry.Agent})
 			} else {
-				runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "thinking", Message: prefix + "💭 " + entry.Message})
+				runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "thinking", Message: prefix + "💭 " + entry.Message, Agent: entry.Agent})
 			}
 		case "tool":
-			runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "thinking", Message: prefix + "🔧 " + entry.Message})
+			runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "thinking", Message: prefix + "🔧 " + entry.Message, Agent: entry.Agent})
 		case "text":
 			if isContinuation {
-				runtime.EventsEmit(a.ctx, "log-append", entry.Message)
+				runtime.EventsEmit(a.ctx, "log-append", LogEvent{Message: entry.Message, Agent: entry.Agent})
 			} else {
-				runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "text", Message: prefix + entry.Message})
+				runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "text", Message: prefix + entry.Message, Agent: entry.Agent})
 			}
 		case "status":
-			runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "text", Message: prefix + "📌 " + entry.Message})
+			runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "text", Message: prefix + "📌 " + entry.Message, Agent: entry.Agent})
 			runtime.EventsEmit(a.ctx, "team-updated", a.GetAgentStatuses())
 		}
 		lastAgent = entry.Agent

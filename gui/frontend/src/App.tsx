@@ -22,6 +22,7 @@ interface AgentStatus {
 interface LogEvent {
   type: 'text' | 'thinking' | 'status';
   message: string;
+  agent?: string;
 }
 
 export default function App() {
@@ -49,24 +50,34 @@ export default function App() {
     });
   }, []);
 
-  const addLog = useCallback((type: LogEntry['type'], message: string) => {
-    pendingLogs.current.push({ type, message });
+  const addLog = useCallback((type: LogEntry['type'], message: string, agent?: string) => {
+    pendingLogs.current.push({ type, message, agent });
     scheduleFlush();
   }, [scheduleFlush]);
 
-  const appendLog = useCallback((text: string) => {
+  const appendLog = useCallback((text: string, agent?: string) => {
+    // pendingLogs에서 같은 agent의 마지막 항목을 찾아 append
     if (pendingLogs.current.length > 0) {
-      const last = pendingLogs.current[pendingLogs.current.length - 1];
-      last.message += text;
-    } else {
-      setLogs(prev => {
-        if (prev.length === 0) return prev;
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        updated[updated.length - 1] = { ...last, message: last.message + text };
-        return updated;
-      });
+      for (let i = pendingLogs.current.length - 1; i >= 0; i--) {
+        if ((pendingLogs.current[i].agent || '') === (agent || '')) {
+          pendingLogs.current[i].message += text;
+          scheduleFlush();
+          return;
+        }
+      }
     }
+    // pendingLogs에 없으면 state에서 찾기
+    setLogs(prev => {
+      if (prev.length === 0) return prev;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if ((prev[i].agent || '') === (agent || '')) {
+          const updated = [...prev];
+          updated[i] = { ...prev[i], message: prev[i].message + text };
+          return updated;
+        }
+      }
+      return prev;
+    });
     scheduleFlush();
   }, [scheduleFlush]);
 
@@ -76,11 +87,15 @@ export default function App() {
       if (typeof evt === 'string') {
         addLog('text', evt);
       } else {
-        addLog((evt.type || 'text') as LogEntry['type'], evt.message);
+        addLog((evt.type || 'text') as LogEntry['type'], evt.message, evt.agent);
       }
     });
-    const cancelAppend = EventsOn('log-append', (text: string) => {
-      appendLog(text);
+    const cancelAppend = EventsOn('log-append', (evt: LogEvent | string) => {
+      if (typeof evt === 'string') {
+        appendLog(evt);
+      } else {
+        appendLog(evt.message, evt.agent);
+      }
     });
     const cancelTeam = EventsOn('team-updated', (statuses: AgentStatus[]) => {
       if (statuses) setAgents(statuses);
@@ -134,10 +149,11 @@ export default function App() {
       setProjectOpen(true);
       addLog('text', `✅ 프로젝트 준비 완료: ${dir}`);
       addLog('text', '요구사항을 입력하면 팀장이 CLI 도구로 팀을 관리하고 작업을 수행합니다.');
+      await refreshStatuses();
     } catch (e: unknown) {
       addLog('text', `❌ 초기화 실패: ${e}`);
     }
-  }, [addLog]);
+  }, [addLog, refreshStatuses]);
 
   const handleOpen = useCallback(async (dir: string) => {
     try {

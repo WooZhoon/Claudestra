@@ -41,6 +41,8 @@ func main() {
 		cmdAssign()
 	case "lead-session":
 		cmdLeadSession()
+	case "wait":
+		cmdWait()
 	case "stop":
 		cmdStop()
 	case "hook":
@@ -70,6 +72,7 @@ func printUsage() {
   claudestra output <agent>            에이전트 최근 출력
   claudestra assign <agent> <instr>    팀원에게 태스크 실행 (동기)
   claudestra lead-session <request>   단일 세션 모드 (팀장이 CLI로 전체 관리)
+  claudestra wait <agent...>          팀원 완료 대기 (RUNNING→DONE/ERROR)
   claudestra stop <agent|job-id>     실행 중인 작업 중지
   claudestra hook pretooluse          PreToolUse 훅 (stdin에서 JSON 읽음)`)
 }
@@ -481,6 +484,48 @@ func cmdRunJob(jobID string) {
 		status = "error"
 	}
 	internal.FinishJob(ws.JobsDir, job, status, result)
+}
+
+// ── wait ──
+
+func cmdWait() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "사용법: claudestra wait <agent1> [agent2 ...]")
+		os.Exit(1)
+	}
+
+	ws := mustWorkspace()
+	targets := os.Args[2:]
+
+	// Poll every 2 seconds until all targets are no longer RUNNING
+	for {
+		allDone := true
+		for _, target := range targets {
+			statusFile := ws.Root + "/" + target + "/.agent-status"
+			status := "IDLE"
+			if data, err := os.ReadFile(statusFile); err == nil {
+				status = strings.TrimSpace(string(data))
+			}
+			if status == "RUNNING" {
+				allDone = false
+				break
+			}
+		}
+		if allDone {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	// Print final status
+	for _, target := range targets {
+		statusFile := ws.Root + "/" + target + "/.agent-status"
+		status := "IDLE"
+		if data, err := os.ReadFile(statusFile); err == nil {
+			status = strings.TrimSpace(string(data))
+		}
+		fmt.Printf("%s: %s\n", target, status)
+	}
 }
 
 // ── stop ──

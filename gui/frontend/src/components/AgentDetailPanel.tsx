@@ -114,6 +114,29 @@ export default memo(function AgentDetailPanel({ detail, visible, onClose }: Agen
           </Section>
         )}
 
+        {/* 받은 지시 */}
+        <Section title="받은 지시">
+          {detail.instruction ? (
+            <pre style={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontSize: 12,
+              lineHeight: 1.7,
+              color: 'var(--text-secondary)',
+              background: 'var(--bg-primary)',
+              padding: 12,
+              borderRadius: 6,
+              border: '1px solid var(--border)',
+              maxHeight: 150,
+              overflowY: 'auto',
+            }}>
+              {detail.instruction}
+            </pre>
+          ) : (
+            <Empty text="아직 지시가 없습니다" />
+          )}
+        </Section>
+
         {/* 실행 로그 */}
         <Section title="실행 로그">
           {detail.logs ? (
@@ -155,29 +178,6 @@ export default memo(function AgentDetailPanel({ detail, visible, onClose }: Agen
             />
           ) : (
             <Empty text="아직 결과가 없습니다" />
-          )}
-        </Section>
-
-        {/* 받은 지시 */}
-        <Section title="받은 지시">
-          {detail.instruction ? (
-            <pre style={{
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-              fontSize: 12,
-              lineHeight: 1.7,
-              color: 'var(--text-secondary)',
-              background: 'var(--bg-primary)',
-              padding: 12,
-              borderRadius: 6,
-              border: '1px solid var(--border)',
-              maxHeight: 150,
-              overflowY: 'auto',
-            }}>
-              {detail.instruction}
-            </pre>
-          ) : (
-            <Empty text="아직 지시가 없습니다" />
           )}
         </Section>
       </div>

@@ -58,6 +58,9 @@ export default memo(function Sidebar({ agents, onSelectAgent, selectedAgent }: S
               alignItems: 'center',
               gap: 8,
               fontSize: 13,
+              boxShadow: agent.status === 'RUNNING' ? '0 0 8px 2px rgba(122, 162, 247, 0.5), inset 0 0 4px rgba(122, 162, 247, 0.15)' : 'none',
+              border: agent.status === 'RUNNING' ? '1px solid rgba(122, 162, 247, 0.4)' : '1px solid transparent',
+              transition: 'box-shadow 0.3s, border 0.3s',
             }}
           >
             <span>{statusIcon[agent.status] || '❓'}</span>
