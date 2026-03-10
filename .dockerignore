@@ -1,5 +1,9 @@
-out/
-gui/claudestra
 gui/build/bin/
 gui/frontend/node_modules/
 gui/frontend/dist/
+gui/claudestra
+src/
+docs/
+*.md
+.git/
+__pycache__/

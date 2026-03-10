@@ -1,27 +1,45 @@
-FROM python:3.12-slim
+# Claudestra build container
+# Usage: docker build -t claudestra-builder . && docker run --rm -v ./out:/out claudestra-builder
 
-# Node.js 설치 (Claude Code CLI 용)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+FROM golang:1.23-bookworm AS builder
 
-# Claude Code CLI 설치
-RUN npm install -g @anthropic-ai/claude-code
+# System dependencies for Wails + webkit2gtk-4.1
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential pkg-config \
+    libgtk-3-dev libwebkit2gtk-4.1-dev \
+    curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Python 의존성
-RUN pip install --no-cache-dir pyyaml
+# Node.js 20 for frontend build
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
-# 일반 유저 생성 (root에서 claude 실행 불가)
-RUN useradd -m -s /bin/bash orchestra
-RUN mkdir -p /app /workspace && chown -R orchestra:orchestra /app /workspace
+# Install Wails CLI
+RUN go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
 
-# 소스 복사
-WORKDIR /app
-COPY --chown=orchestra:orchestra src/ /app/
+WORKDIR /src
 
-USER orchestra
-ENV PYTHONDONTWRITEBYTECODE=1
+# Cache Go dependencies
+COPY gui/go.mod gui/go.sum ./gui/
+RUN cd gui && go mod download
 
-CMD ["bash"]
+# Cache Node dependencies
+COPY gui/frontend/package.json gui/frontend/package-lock.json ./gui/frontend/
+RUN cd gui/frontend && npm ci
+
+# Copy full source
+COPY gui/ ./gui/
+
+# Build GUI binary
+RUN cd gui && wails build -tags webkit2_41 -o claudestra-gui
+
+# Build CLI tool
+RUN cd gui && go build -o /build/claudestra ./cmd/claudestra
+
+RUN cp gui/build/bin/claudestra-gui /build/claudestra-gui
+
+# Output stage — copy binaries to mounted /out
+FROM debian:bookworm-slim
+COPY --from=builder /build/claudestra-gui /build/claudestra /build/
+CMD ["cp", "/build/claudestra-gui", "/build/claudestra", "/out/"]

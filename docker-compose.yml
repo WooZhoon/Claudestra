@@ -1,0 +1,7 @@
+# Build only — outputs binaries to ./out/
+# Usage: docker compose run --rm build
+services:
+  build:
+    build: .
+    volumes:
+      - ./out:/out
