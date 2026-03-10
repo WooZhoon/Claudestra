@@ -1,14 +1,13 @@
-"""
-Orchestra - Workspace Manager
-프로젝트 디렉토리 구조 생성 및 이데아 관리
+"""Orchestra - Workspace Manager.
+
+Manages project directory structure and agent idea prompts.
 """
 
 import yaml
 from pathlib import Path
-from dataclasses import dataclass
 
 
-# ── 기본 이데아 템플릿 ────────────────────────────────────────────
+# ── Default idea templates ────────────────────────────────────────────
 
 DEFAULT_IDEAS: dict[str, str] = {
     "backend": """당신은 백엔드 개발 전문가입니다.
@@ -84,15 +83,15 @@ DEFAULT_IDEAS: dict[str, str] = {
 - 개발자와 비개발자 모두 이해할 수 있도록 문서를 작성합니다.""",
 }
 
-CONSUMER_ROLES = {"reviewer", "doc_writer"}  # 크로스 참조 에이전트
+CONSUMER_ROLES = {"reviewer", "doc_writer"}  # cross-reference agents
 
 
-# ── Workspace 클래스 ───────────────────────────────────────────────
+# ── Workspace class ───────────────────────────────────────────────
 
 class Workspace:
-    """
-    프로젝트 워크스페이스를 초기화하고 관리합니다.
-    .orchestra/ 디렉토리에 설정과 이데아를 저장합니다.
+    """Initialize and manage the project workspace.
+
+    Configuration and idea prompts are stored under ``.orchestra/``.
     """
 
     def __init__(self, root: Path):
@@ -107,19 +106,19 @@ class Workspace:
         self.locks_dir.mkdir(parents=True, exist_ok=True)
         self.contracts_dir.mkdir(parents=True, exist_ok=True)
 
-    def init(self, agent_roles: list[str]):
-        """워크스페이스와 각 에이전트 디렉토리를 초기화합니다."""
+    def init(self, agent_roles: list[str]) -> None:
+        """Initialize workspace and agent directories."""
         config = {"agents": agent_roles, "version": "1.0"}
         (self.orchestra / "config.yaml").write_text(
             yaml.dump(config, allow_unicode=True)
         )
 
         for role in agent_roles:
-            # 서브 디렉토리 생성
+            # Create subdirectory
             agent_dir = self.root / role
             agent_dir.mkdir(exist_ok=True)
 
-            # 이데아 파일 생성 (없으면 기본값)
+            # Create idea file (default if not exists)
             idea_file = self.ideas_dir / f"{role}.yaml"
             if not idea_file.exists():
                 idea_text = DEFAULT_IDEAS.get(role, f"당신은 {role} 전문가입니다.\n담당 디렉토리: ./{role}/")
@@ -131,7 +130,7 @@ class Workspace:
         print(f"[워크스페이스] 에이전트: {', '.join(agent_roles)}")
 
     def load_idea(self, role: str) -> str:
-        """이데아 파일에서 시스템 프롬프트를 로드합니다."""
+        """Load the system prompt from an idea file."""
         idea_file = self.ideas_dir / f"{role}.yaml"
         if idea_file.exists():
             data = yaml.safe_load(idea_file.read_text())

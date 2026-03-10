@@ -18,6 +18,7 @@ func (e *LockConflictError) Error() string {
 	return fmt.Sprintf("'%s' 는 '%s' 에이전트가 사용 중 (요청: '%s')", e.Path, e.Holder, e.Requester)
 }
 
+// FileLockRegistry manages file-level locks to prevent concurrent agent access.
 type FileLockRegistry struct {
 	locksDir string
 	locks    map[string]string // normalized_path → agent_id

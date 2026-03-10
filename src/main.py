@@ -1,10 +1,10 @@
-"""
-Orchestra MVP - 메인 진입점
-사용법:
-  python main.py init    # 새 프로젝트 초기화
-  python main.py run     # 오케스트레이션 실행
-  python main.py idea    # 이데아 편집
-  python main.py status  # 팀원 상태 확인
+"""Orchestra MVP - Main entry point.
+
+Usage:
+    python main.py init    # Initialize a new project
+    python main.py run     # Run orchestration
+    python main.py idea    # Edit agent idea
+    python main.py status  # Check team status
 """
 
 import sys
@@ -16,16 +16,16 @@ import yaml
 
 from agent      import Agent, AgentConfig
 from lead_agent import LeadAgent
-from workspace  import Workspace, CONSUMER_ROLES
+from workspace  import Workspace
 from file_lock  import FileLockRegistry
 
 
-# ── 역할별 허용 도구 ────────────────────────────────────────────────
+# ── Allowed tools per role ────────────────────────────────────────
 
-# Producer (코드 작성자): 파일 읽기/쓰기/검색 + Bash
+# Producer (code writers): file read/write/search + Bash
 PRODUCER_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
 
-# Consumer (리뷰어 등): 읽기 전용 — 코드를 수정하지 못하게 제한
+# Consumer (reviewers, etc.): read-only — cannot modify code
 CONSUMER_TOOLS = ["Read", "Glob", "Grep"]
 
 ROLE_TOOLS: dict[str, list[str]] = {
@@ -33,16 +33,14 @@ ROLE_TOOLS: dict[str, list[str]] = {
     "frontend":   PRODUCER_TOOLS,
     "db":         PRODUCER_TOOLS,
     "reviewer":   CONSUMER_TOOLS,
-    "doc_writer": CONSUMER_TOOLS + ["Write"],  # 문서 작성만 허용
+    "doc_writer": CONSUMER_TOOLS + ["Write"],  # allow doc writing only
 }
 
 
-# ── 팩토리: 에이전트 생성 ──────────────────────────────────────────
+# ── Factory: build agents ──────────────────────────────────────────
 
-def build_team(workspace: Workspace, roles: list[str]) -> tuple[LeadAgent, dict]:
-    """
-    워크스페이스 설정을 기반으로 팀장 + 팀원을 생성합니다.
-    """
+def build_team(workspace: Workspace, roles: list[str]) -> tuple[LeadAgent, dict[str, Agent]]:
+    """Build lead agent and team members from workspace config."""
     lock_registry = FileLockRegistry(workspace.locks_dir)
     lead = LeadAgent(work_dir=workspace.root)
     agents = {}
@@ -51,12 +49,12 @@ def build_team(workspace: Workspace, roles: list[str]) -> tuple[LeadAgent, dict]
         idea      = workspace.load_idea(role)
         agent_dir = workspace.root / role
 
-        # Consumer는 Producer 디렉토리를 읽기 전용 참조
+        # Consumers get read-only references to producer directories
         read_refs = []
         if workspace.is_consumer(role):
             read_refs = workspace.get_producer_dirs(exclude_role=role)
 
-        # 역할별 허용 도구 (미등록 역할은 제한 없음)
+        # Allowed tools per role (unregistered roles have no restrictions)
         allowed_tools = ROLE_TOOLS.get(role, [])
 
         config = AgentConfig(
@@ -74,17 +72,17 @@ def build_team(workspace: Workspace, roles: list[str]) -> tuple[LeadAgent, dict]
     return lead, agents
 
 
-# ── 커맨드 핸들러 ─────────────────────────────────────────────────
+# ── Command handlers ─────────────────────────────────────────────
 
-def cmd_init(args):
-    """새 Orchestra 프로젝트를 초기화합니다."""
+def cmd_init(args: argparse.Namespace) -> None:
+    """Initialize a new Orchestra project."""
     project_dir = Path(args.project_dir)
     workspace   = Workspace(project_dir)
 
     print("\n🎼 Orchestra 프로젝트 초기화")
     print("─" * 40)
 
-    # 역할 선택
+    # Role selection
     print("추가할 팀원 역할을 선택하세요 (쉼표로 구분):")
     print("사용 가능: backend, frontend, db, reviewer, doc_writer")
     print("예시: backend,frontend,db,reviewer")
@@ -106,8 +104,8 @@ def cmd_init(args):
     print(f"  python main.py run --project {project_dir}")
 
 
-def cmd_run(args):
-    """팀장 AI에게 요청을 전달하고 오케스트레이션을 실행합니다."""
+def cmd_run(args: argparse.Namespace) -> None:
+    """Forward a request to the lead agent and run orchestration."""
     project_dir = Path(args.project_dir)
     workspace   = Workspace(project_dir)
 
@@ -123,15 +121,15 @@ def cmd_run(args):
         print("❌ 등록된 팀원이 없습니다.")
         return
 
-    # 팀 구성
-    lead, agents = build_team(workspace, roles)
+    # Build team
+    lead, _agents = build_team(workspace, roles)
 
     print("\n🎼 Orchestra 실행")
     print("─" * 40)
     print(f"팀원: {', '.join(roles)}")
     print("─" * 40)
 
-    # 사용자 입력 루프
+    # User input loop
     while True:
         print()
         try:
@@ -140,8 +138,11 @@ def cmd_run(args):
             print("\n👋 종료합니다.")
             break
 
-        # 보이지 않는 제어 문자 제거 (한글 등 유니코드는 유지)
-        user_input = "".join(ch for ch in user_input if ch == "\n" or not unicodedata.category(ch).startswith("C")).strip()
+        # Strip invisible control characters (preserve Unicode like Korean)
+        user_input = "".join(
+            ch for ch in user_input
+            if ch == "\n" or not unicodedata.category(ch).startswith("C")
+        ).strip()
 
         if not user_input or user_input.lower() in ("q", "quit", "exit"):
             if not user_input:
@@ -158,8 +159,8 @@ def cmd_run(args):
         print("=" * 60)
 
 
-def cmd_idea(args):
-    """특정 에이전트의 이데아를 편집합니다."""
+def cmd_idea(args: argparse.Namespace) -> None:
+    """Edit a specific agent's idea prompt."""
     project_dir = Path(args.project_dir)
     workspace   = Workspace(project_dir)
 
@@ -202,8 +203,8 @@ def cmd_idea(args):
         print("⚠️  변경사항 없음.")
 
 
-def cmd_status(args):
-    """현재 팀원들의 상태를 확인합니다."""
+def cmd_status(args: argparse.Namespace) -> None:
+    """Display current team member statuses."""
     project_dir = Path(args.project_dir)
     workspace   = Workspace(project_dir)
 
@@ -229,7 +230,7 @@ def cmd_status(args):
         icon = {"IDLE": "⚪", "RUNNING": "🔵", "DONE": "✅", "ERROR": "❌"}.get(status, "❓")
         print(f"  {icon} {role:<15} [{role_type:<10}]  상태: {status:<10}  이데아: {idea_size}자")
 
-    # 활성 잠금 표시
+    # Show active locks
     lock_registry = FileLockRegistry(workspace.locks_dir)
     locks = lock_registry.list_locks()
     if locks:
@@ -242,16 +243,16 @@ def cmd_status(args):
     print("─" * 50)
 
 
-# ── 메인 ──────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="🎼 Orchestra - Claude Code Multi-Agent Orchestration MVP"
     )
 
     subparsers = parser.add_subparsers(dest="command")
 
-    # 공통 인자
+    # Common arguments
     parent = argparse.ArgumentParser(add_help=False)
     parent.add_argument(
         "--project", "-p",

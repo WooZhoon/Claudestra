@@ -36,7 +36,7 @@ func NewLogWatcher(logsDir string, callback func(LogEntry)) *LogWatcher {
 func (w *LogWatcher) Start() error {
 	os.MkdirAll(w.dir, 0755)
 
-	// 기존 파일의 현재 위치를 기록 (이전 내용 무시)
+	// Record current file positions to skip existing content
 	w.snapshotOffsets()
 
 	watcher, err := fsnotify.NewWatcher()
@@ -127,7 +127,7 @@ func (w *LogWatcher) readNewLines(path string) {
 		w.callback(entry)
 	}
 
-	// 현재 위치 기록
+	// Record current position
 	if pos, err := f.Seek(0, 1); err == nil {
 		w.offsets[path] = pos
 	}

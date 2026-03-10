@@ -11,7 +11,7 @@ import (
 	"syscall"
 )
 
-// ── 세션 메모리 ──
+// ── Session Memory ──
 
 type OpenIssue struct {
 	ID          string `json:"id"`
@@ -36,16 +36,17 @@ type Session struct {
 
 // ── LeadAgent ──
 
-// LogFunc is called for real-time log streaming to GUI
+// LogFunc is called for real-time log streaming to the GUI.
 type LogFunc func(msg string)
 
+// LeadAgent orchestrates the entire workflow as the team lead.
 type LeadAgent struct {
 	WorkDir     string
-	CLIPath     string // claudestra CLI 바이너리 경로
+	CLIPath     string // claudestra CLI binary path
 	Agents      map[string]*Agent
 	session     *Session
-	activeLogFn LogFunc // 현재 활성화된 로그 콜백 (streaming용)
-	activeCmd   *exec.Cmd
+	activeLogFn LogFunc   // active log callback for streaming
+	activeCmd   *exec.Cmd // currently running claude process
 	cmdMu       sync.Mutex
 }
 
@@ -96,7 +97,7 @@ func (l *LeadAgent) buildSessionBlock() string {
 	}
 
 	if len(s.CompletedTasks) > 0 {
-		// 최근 10개만
+		// Keep only the last 10
 		tasks := s.CompletedTasks
 		if len(tasks) > 10 {
 			tasks = tasks[len(tasks)-10:]
@@ -129,11 +130,11 @@ func (l *LeadAgent) AddAgent(agent *Agent) {
 	l.Agents[agent.Config.AgentID] = agent
 }
 
-// ── Phase D: 단일 세션 모드 ──
+// ── Phase D: Single Session Mode ──
 
-// RunLeadSession은 단일 Claude 세션으로 전체 워크플로를 처리합니다.
-// Lead 1회 + sub-agent N회로 Claude 호출을 최소화합니다.
-// Lead는 claudestra CLI를 Bash 도구로 호출하여 팀 관리, 계약서, 태스크 배분을 수행합니다.
+// RunLeadSession runs the entire workflow in a single Claude session.
+// It minimizes Claude calls to 1 lead + N sub-agents.
+// The lead uses the claudestra CLI via the Bash tool for team management, contracts, and task assignment.
 func (l *LeadAgent) RunLeadSession(userInput string, logFn LogFunc) string {
 	if logFn == nil {
 		logFn = func(msg string) { fmt.Println(msg) }
@@ -159,7 +160,7 @@ func (l *LeadAgent) RunLeadSession(userInput string, logFn LogFunc) string {
 	cmd.Dir = l.WorkDir
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Env = filterEnv(os.Environ(), "CLAUDECODE")
-	// 프로세스 그룹 설정 — Cancel 시 자식 프로세스도 함께 종료
+	// Set process group so Cancel kills child processes too
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdout, err := cmd.StdoutPipe()
@@ -229,7 +230,7 @@ func (l *LeadAgent) RunLeadSession(userInput string, logFn LogFunc) string {
 		return "세션이 중단되었습니다."
 	}
 
-	logFn(fmt.Sprintf("\n[팀장] ✅ 세션 완료"))
+	logFn("\n[팀장] ✅ 세션 완료")
 
 	return result
 }
@@ -244,7 +245,7 @@ func (l *LeadAgent) Cancel() {
 		return
 	}
 
-	// 프로세스 그룹 전체 종료 (lead Claude + 자식 claudestra assign + sub-agent Claude)
+	// Kill entire process group (lead Claude + child claudestra assign + sub-agent Claude)
 	syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 }
 

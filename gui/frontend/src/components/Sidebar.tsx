@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { memo } from 'react';
 
 interface AgentStatus {
   id: string;
@@ -20,7 +20,7 @@ const statusIcon: Record<string, string> = {
   ERROR: '❌',
 };
 
-export default function Sidebar({ agents, onSelectAgent, selectedAgent }: SidebarProps) {
+export default memo(function Sidebar({ agents, onSelectAgent, selectedAgent }: SidebarProps) {
   return (
     <div style={{
       width: 220,
@@ -76,4 +76,4 @@ export default function Sidebar({ agents, onSelectAgent, selectedAgent }: Sideba
       </div>
     </div>
   );
-}
+});

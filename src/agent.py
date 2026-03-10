@@ -1,17 +1,15 @@
-"""
-Orchestra - Agent Base Classes
-각 에이전트는 독립된 subprocess로 Claude Code를 실행합니다.
+"""Orchestra - Agent base classes.
+
+Each agent runs Claude Code as an independent subprocess.
 """
 
 import subprocess
 import threading
 import time
-import os
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
 
 class AgentStatus(Enum):
@@ -25,42 +23,39 @@ class AgentStatus(Enum):
 class AgentConfig:
     agent_id:       str
     role:           str
-    idea:           str          # 시스템 프롬프트 (이데아)
+    idea:           str          # system prompt (idea)
     work_dir:       Path
-    read_refs:      list[Path] = field(default_factory=list)  # 읽기 전용 참조 경로
-    contract:       str = ""     # 인터페이스 계약서
-    allowed_tools:  list[str] = field(default_factory=list)   # 허용 도구 목록 (빈 = 제한 없음)
+    read_refs:      list[Path] = field(default_factory=list)  # read-only reference paths
+    contract:       str = ""     # interface contract
+    allowed_tools:  list[str] = field(default_factory=list)   # allowed tools (empty = unrestricted)
 
 
 class Agent:
-    """
-    단일 Claude Code 인스턴스를 래핑하는 에이전트.
-    claude --print 를 subprocess로 실행하고 결과를 캡처합니다.
+    """Wraps a single Claude Code instance.
+
+    Runs ``claude --print`` as a subprocess and captures the result.
     """
 
-    def __init__(self, config: AgentConfig, lock_registry=None):
+    def __init__(self, config: AgentConfig, lock_registry: "FileLockRegistry | None" = None):
         self.config  = config
         self.lock_registry = lock_registry
         self.status  = AgentStatus.IDLE
-        self.output  = ""       # 마지막 실행 결과
+        self.output  = ""       # last execution result
         self._lock   = threading.Lock()
 
-        # 작업 디렉토리 생성
+        # Create working directory
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
         self._write_status("IDLE")
 
-    # ── 공개 API ──────────────────────────────────────────────
+    # ── Public API ──────────────────────────────────────────────
 
     def run(self, instruction: str) -> str:
-        """
-        에이전트에게 지시를 내리고 결과를 반환합니다.
-        blocking 방식 (완료까지 대기).
-        """
+        """Execute an instruction and return the result (blocking)."""
         with self._lock:
             self.status = AgentStatus.RUNNING
             self._write_status("RUNNING")
 
-        # 작업 디렉토리 잠금 획득
+        # Acquire work directory lock
         if self.lock_registry:
             from file_lock import LockConflictError
             try:
@@ -117,7 +112,7 @@ class Agent:
             print(f"[{self.config.role}] ❌ {self.output}")
 
         finally:
-            # 작업 완료 후 잠금 해제
+            # Release lock after completion
             if self.lock_registry:
                 self.lock_registry.release_all(self.config.agent_id)
                 print(f"[{self.config.role}] 🔓 잠금 해제")
@@ -125,13 +120,13 @@ class Agent:
         return self.output
 
     def run_async(self, instruction: str) -> threading.Thread:
-        """비동기 실행 — 스레드를 반환합니다."""
+        """Run asynchronously and return the thread."""
         t = threading.Thread(target=self.run, args=(instruction,), daemon=True)
         t.start()
         return t
 
     def wait_until_done(self, timeout: float = 300) -> bool:
-        """완료될 때까지 폴링으로 대기. True = 성공, False = 타임아웃/에러."""
+        """Poll until done. Returns True on success, False on timeout/error."""
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.status in (AgentStatus.DONE, AgentStatus.ERROR):
@@ -139,15 +134,15 @@ class Agent:
             time.sleep(1)
         return False
 
-    def reset(self):
+    def reset(self) -> None:
         self.status = AgentStatus.IDLE
         self.output = ""
         self._write_status("IDLE")
 
-    # ── 내부 헬퍼 ─────────────────────────────────────────────
+    # ── Internal helpers ─────────────────────────────────────────────
 
     def _build_prompt(self, instruction: str) -> str:
-        """이데아 + 크로스 참조 경로 + 실제 지시를 합칩니다."""
+        """Combine idea, cross-reference paths, and instruction into a prompt."""
         parts = [self.config.idea]
 
         parts.append("""[작업 원칙]
@@ -165,6 +160,6 @@ class Agent:
         parts.append(f"[지시]\n{instruction}")
         return "\n\n".join(parts)
 
-    def _write_status(self, status: str):
+    def _write_status(self, status: str) -> None:
         status_file = self.config.work_dir / ".agent-status"
         status_file.write_text(status)

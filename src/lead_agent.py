@@ -1,25 +1,20 @@
-"""
-Orchestra - Lead Agent (팀장)
-사용자 입력을 분석해서 각 팀원에게 태스크를 배분합니다.
+"""Orchestra - Lead Agent.
+
+Analyzes user input and distributes tasks to team members.
 """
 
 import subprocess
 import json
 import re
+import threading
 from collections import deque
 from pathlib import Path
-from typing import Optional
 
-from agent import Agent, AgentConfig, AgentStatus
+from agent import Agent, AgentStatus
 
 
 class LeadAgent:
-    """
-    팀장 AI.
-    1. 사용자 입력을 받아 태스크를 분해합니다.
-    2. 각 팀원에게 적절한 지시를 배분합니다.
-    3. 팀원 완료 후 결과를 수집하고 보고합니다.
-    """
+    """Lead AI agent that decomposes tasks, delegates to team, and reports results."""
 
     IDEA = """당신은 소프트웨어 개발 팀의 팀장 AI입니다.
 당신의 역할은:
@@ -35,12 +30,12 @@ class LeadAgent:
         self.agents: dict[str, Agent] = {}
         self.work_dir.mkdir(parents=True, exist_ok=True)
 
-        # 대화 메모리: 마지막 실행 컨텍스트 (토큰 절약을 위해 요약만 저장)
-        self._last_context: str | None = None   # 이전 보고서 핵심 요약
+        # Conversation memory: stores summary of last execution context
+        self._last_context: str | None = None
 
-    # ── 팀원 관리 ──────────────────────────────────────────────
+    # ── Team management ──────────────────────────────────────────────
 
-    def add_agent(self, agent: Agent):
+    def add_agent(self, agent: Agent) -> None:
         self.agents[agent.config.agent_id] = agent
         print(f"[팀장] 팀원 추가: {agent.config.role} (id={agent.config.agent_id})")
 
@@ -54,17 +49,15 @@ class LeadAgent:
             for a in self.agents.values()
         ]
 
-    # ── 핵심: 사용자 입력 처리 ─────────────────────────────────
+    # ── Core: process user input ─────────────────────────────────
 
     def process(self, user_input: str) -> str:
-        """
-        사용자 입력 → 계획 수립 → 사용자 승인 → 단계별 실행 → 최종 보고
-        """
+        """Plan, get approval, execute step-by-step, and produce a final report."""
         print(f"\n{'='*60}")
         print(f"[팀장] 사용자 입력 수신: {user_input}")
         print(f"{'='*60}")
 
-        # 1단계: 계획 수립
+        # Step 1: Build plan
         print("\n[팀장] 📋 실행 계획 수립 중...")
         plan = self._decompose(user_input)
         if plan is None:
@@ -73,11 +66,11 @@ class LeadAgent:
             print("[팀장] 💬 개발 태스크가 아닙니다. 팀장이 직접 응답합니다.")
             return self._direct_reply(user_input)
 
-        # 2단계: 인터페이스 계약서 생성
+        # Step 2: Generate interface contract
         print("\n[팀장] 📜 인터페이스 계약서 작성 중...")
         contract = self._generate_contract(user_input, plan)
 
-        # 3단계: 계획 + 계약서 표시 & 사용자 승인
+        # Step 3: Display plan + contract & get user approval
         self._print_plan(plan)
         if contract:
             self._print_contract(contract)
@@ -88,13 +81,13 @@ class LeadAgent:
 
         step_by_step = (approval == "s")
 
-        # 계약서 저장 & 에이전트에 주입
+        # Save contract & inject into agents
         if contract:
             self._save_contract(contract)
             for agent in self.agents.values():
                 agent.config.contract = contract
 
-        # 4단계: 단계별 실행
+        # Step 4: Execute step-by-step
         all_results: dict[str, str] = {}
         for step in plan:
             step_num   = step.get("step", "?")
@@ -117,20 +110,20 @@ class LeadAgent:
             results = self._execute_step(tasks)
             all_results.update(results)
 
-            # 단계 완료 요약
+            # Step completion summary
             done  = sum(1 for aid in results if self.agents.get(aid) and self.agents[aid].status == AgentStatus.DONE)
             total = len(tasks)
             print(f"\n  ✅ {step_num}단계 완료 ({done}/{total} 성공)")
 
-        # 4단계: 최종 보고
+        # Step 5: Final report
         if all_results:
             print(f"\n[팀장] 📝 최종 보고 작성 중...")
             return self._summarize(user_input, all_results)
         else:
             return "실행된 태스크가 없습니다."
 
-    def _print_plan(self, plan: list[dict]):
-        """실행 계획을 사용자에게 보여줍니다."""
+    def _print_plan(self, plan: list[dict]) -> None:
+        """Display the execution plan to the user."""
         print(f"\n{'='*60}")
         print("📋 실행 계획")
         print(f"{'='*60}")
@@ -145,11 +138,10 @@ class LeadAgent:
                 print(f"     [{agent_id}] {desc}...")
         print(f"\n{'='*60}")
 
-    # ── 내부: 대화 메모리 ──────────────────────────────────────
+    # ── Internal: conversation memory ──────────────────────────────────────
 
-    def _save_context(self, user_input: str, report: str):
-        """보고서에서 핵심 요약만 추출하여 컨텍스트로 저장합니다."""
-        # 보고서를 간결하게 요약 (토큰 절약)
+    def _save_context(self, user_input: str, report: str) -> None:
+        """Extract key summary from the report and save as context."""
         prompt = f"""아래 보고서에서 핵심 정보만 추출하여 5줄 이내로 요약하세요.
 반드시 포함: 1) 무엇을 만들었는지 2) 해결이 필요한 문제 목록 3) 다음에 해야 할 일
 다른 텍스트 없이 요약만 출력하세요.
@@ -174,21 +166,21 @@ class LeadAgent:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 
-        # 폴백: 보고서 앞부분만 저장
+        # Fallback: save truncated report
         self._last_context = f"[이전 요청: {user_input}]\n{report[:500]}"
 
     def _build_context_block(self) -> str:
-        """이전 대화 컨텍스트를 프롬프트 블록으로 반환합니다."""
+        """Return previous conversation context as a prompt block."""
         if not self._last_context:
             return ""
         return f"\n[이전 작업 컨텍스트 — 사용자가 이전 작업을 참조할 수 있습니다]\n{self._last_context}\n"
 
-    # ── 내부: 태스크 분해 ──────────────────────────────────────
+    # ── Internal: task decomposition ──────────────────────────────────────
 
-    def _decompose(self, user_input: str) -> list[dict]:
-        """
-        Claude Code를 사용해 user_input을 의존성 기반 태스크 그래프로 분해합니다.
-        토폴로지 정렬로 실행 웨이브(step)를 자동 생성합니다.
+    def _decompose(self, user_input: str) -> list[dict] | None:
+        """Decompose user input into a dependency-based task graph.
+
+        Uses topological sort to generate execution waves (steps).
         """
         agent_list = json.dumps(self.list_agents(), ensure_ascii=False, indent=2)
 
@@ -239,18 +231,18 @@ class LeadAgent:
             raw = re.sub(r"```json\s*|\s*```", "", raw).strip()
             tasks = json.loads(raw)
 
-            # 빈 배열이면 그대로 반환 (개발 태스크 아님)
+            # Empty array means non-development task
             if isinstance(tasks, list) and len(tasks) == 0:
                 return []
 
-            # 유효한 에이전트만 남기기
+            # Filter to valid agents only
             valid_ids = set(self.agents.keys())
             tasks = [t for t in tasks if t.get("agent_id") in valid_ids]
 
             if not tasks:
                 return []
 
-            # 토폴로지 정렬 → step 기반 포맷으로 변환
+            # Topological sort → convert to step-based format
             return self._toposort_to_steps(tasks)
 
         except (json.JSONDecodeError, FileNotFoundError) as e:
@@ -258,14 +250,11 @@ class LeadAgent:
             return self._fallback_decompose(user_input)
 
     def _toposort_to_steps(self, tasks: list[dict]) -> list[dict]:
-        """
-        의존성 기반 태스크 리스트를 토폴로지 정렬하여
-        실행 웨이브(step) 포맷으로 변환합니다 (Kahn's algorithm).
-        """
+        """Topologically sort tasks into execution waves using Kahn's algorithm."""
         task_map = {t["id"]: t for t in tasks}
         valid_ids = set(task_map.keys())
 
-        # 진입 차수 계산
+        # Compute in-degrees
         in_degree: dict[str, int] = {tid: 0 for tid in valid_ids}
         dependents: dict[str, list[str]] = {tid: [] for tid in valid_ids}
 
@@ -275,7 +264,7 @@ class LeadAgent:
                     in_degree[t["id"]] += 1
                     dependents[dep].append(t["id"])
 
-        # BFS 웨이브별 수집
+        # BFS wave collection
         queue = deque([tid for tid, deg in in_degree.items() if deg == 0])
         waves: list[list[dict]] = []
         visited = set()
@@ -293,13 +282,13 @@ class LeadAgent:
                         queue.append(dep_tid)
             waves.append(wave_tasks)
 
-        # 순환 의존성 검출 — 방문하지 못한 노드가 있으면 순환
+        # Detect circular dependencies — unvisited nodes indicate cycles
         if len(visited) < len(valid_ids):
             orphans = valid_ids - visited
             print(f"[팀장] ⚠️  순환 의존성 감지: {orphans}, 남은 태스크를 마지막 웨이브에 추가")
             waves.append([task_map[tid] for tid in orphans])
 
-        # step 포맷으로 변환
+        # Convert to step format
         steps = []
         for i, wave in enumerate(waves, 1):
             agent_names = ", ".join(t["agent_id"] for t in wave)
@@ -314,7 +303,7 @@ class LeadAgent:
         return steps
 
     def _fallback_decompose(self, user_input: str) -> list[dict]:
-        """Claude Code 없이 동작하는 폴백: 모든 팀원에게 동일 지시."""
+        """Fallback without Claude Code: send identical instruction to all members."""
         print("[팀장] ⚠️  폴백: 모든 팀원에게 동일 지시 전달")
         return [
             {
@@ -330,10 +319,10 @@ class LeadAgent:
             }
         ]
 
-    # ── 내부: 인터페이스 계약서 ──────────────────────────────────
+    # ── Internal: interface contract ──────────────────────────────────
 
     def _generate_contract(self, user_input: str, plan: list[dict]) -> str | None:
-        """팀원들이 공유할 인터페이스 계약서를 생성합니다."""
+        """Generate an interface contract for team members to share."""
         agent_list = json.dumps(self.list_agents(), ensure_ascii=False, indent=2)
         plan_text = json.dumps(plan, ensure_ascii=False, indent=2)
 
@@ -378,26 +367,26 @@ class LeadAgent:
         print("[팀장] ⚠️  계약서 생성 실패, 계약서 없이 진행합니다.")
         return None
 
-    def _print_contract(self, contract: str):
-        """인터페이스 계약서를 표시합니다."""
+    def _print_contract(self, contract: str) -> None:
+        """Display the interface contract."""
         print(f"\n{'='*60}")
         print("📜 인터페이스 계약서")
         print(f"{'='*60}")
         print(contract)
         print(f"{'='*60}")
 
-    def _save_contract(self, contract: str):
-        """계약서를 파일로 저장합니다."""
+    def _save_contract(self, contract: str) -> None:
+        """Save the contract to a file."""
         contracts_dir = self.work_dir / ".orchestra" / "contracts"
         contracts_dir.mkdir(parents=True, exist_ok=True)
         contract_file = contracts_dir / "contract.yaml"
         contract_file.write_text(contract)
         print(f"[팀장] 📜 계약서 저장: {contract_file}")
 
-    # ── 내부: 팀장 직접 응답 ────────────────────────────────────
+    # ── Internal: direct reply ────────────────────────────────────
 
     def _direct_reply(self, user_input: str) -> str:
-        """개발 태스크가 아닌 경우 팀장이 직접 응답합니다."""
+        """Respond directly when the input is not a development task."""
         context_block = self._build_context_block()
 
         prompt = f"""당신은 소프트웨어 개발 팀의 팀장입니다.
@@ -422,12 +411,12 @@ class LeadAgent:
 
         return "안녕하세요! 개발 관련 요청을 입력해주시면 팀원들에게 배분하여 처리하겠습니다."
 
-    # ── 내부: 단계 실행 ──────────────────────────────────────
+    # ── Internal: step execution ──────────────────────────────────────
 
     def _execute_step(self, tasks: list[dict]) -> dict[str, str]:
-        """한 단계의 태스크들을 병렬 실행하고 결과를 반환합니다."""
+        """Execute tasks in a single step in parallel and return results."""
         results: dict[str, str] = {}
-        threads: list[tuple[str, object]] = []
+        threads: list[tuple[str, threading.Thread]] = []
 
         for task in tasks:
             agent_id    = task["agent_id"]
@@ -447,10 +436,10 @@ class LeadAgent:
 
         return results
 
-    # ── 내부: 결과 요약 ────────────────────────────────────────
+    # ── Internal: summarize results ────────────────────────────────────────
 
     def _summarize(self, user_input: str, results: dict[str, str]) -> str:
-        """팀원 결과물을 취합해 최종 보고서를 작성합니다."""
+        """Aggregate team results into a final report."""
         results_text = "\n\n".join(
             f"[{self.agents[aid].config.role} 결과]\n{output}"
             for aid, output in results.items()
@@ -489,7 +478,7 @@ class LeadAgent:
         except FileNotFoundError:
             pass
 
-        # 폴백: 단순 결합
+        # Fallback: simple concatenation
         fallback = f"[팀원 결과 요약]\n\n{results_text}"
         self._save_context(user_input, fallback)
         return fallback

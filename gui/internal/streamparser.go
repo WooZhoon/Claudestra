@@ -47,9 +47,9 @@ type StreamCallbacks struct {
 // ParseStream reads Claude CLI stream-json lines from reader and calls
 // the appropriate callbacks.
 //
-// Flush 전략:
-//   - text/thinking: 공백 또는 줄바꿈이 포함된 토큰 도착 시 즉시 flush (단어 단위 스트리밍)
-//   - text는 content_block_stop에서 flush하지 않음 (tool 사이 텍스트 이어붙이기)
+// Flush strategy:
+//   - text/thinking: flush immediately when a token containing whitespace or newline arrives (word-level streaming)
+//   - text is NOT flushed at content_block_stop (to concatenate text between tool calls)
 func ParseStream(reader io.Reader, cb StreamCallbacks) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 128*1024), 512*1024)
@@ -107,7 +107,7 @@ func ParseStream(reader io.Reader, cb StreamCallbacks) {
 				switch evt.Event.Delta.Type {
 				case "text_delta":
 					textBuf.WriteString(evt.Event.Delta.Text)
-					// 공백이나 줄바꿈이 포함되면 즉시 flush (단어 단위 스트리밍)
+					// Flush on whitespace or newline for word-level streaming
 					if strings.ContainsAny(evt.Event.Delta.Text, " \n") {
 						flushText()
 					}
@@ -121,8 +121,7 @@ func ParseStream(reader io.Reader, cb StreamCallbacks) {
 				}
 
 			case "content_block_stop":
-				// text는 여기서 flush하지 않음 — tool 호출 사이 텍스트를 이어붙여서
-				// 단어 중간에서 끊기는 현상 방지.
+				// Do NOT flush text here — avoids mid-word breaks between tool calls.
 				flushThink()
 				if currentBlockType == "tool_use" && cb.OnToolUse != nil {
 					summary := summarizeToolInput(currentToolName, toolInputBuf.String())

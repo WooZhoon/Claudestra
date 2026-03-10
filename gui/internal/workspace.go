@@ -51,7 +51,9 @@ func (w *Workspace) Init(roles []string) error {
 	if err != nil {
 		return err
 	}
-	os.WriteFile(filepath.Join(w.OrchestraDir, "config.yaml"), data, 0644)
+	if err := os.WriteFile(filepath.Join(w.OrchestraDir, "config.yaml"), data, 0644); err != nil {
+		return err
+	}
 
 	for _, role := range roles {
 		agentDir := filepath.Join(w.Root, role)
@@ -72,7 +74,7 @@ func (w *Workspace) LoadConfig() (*WorkspaceConfig, error) {
 	return &config, nil
 }
 
-// ── RolePlan 저장/로드 ──
+// ── RolePlan Save/Load ──
 
 func (w *Workspace) SaveRolePlans(plans []RolePlan) error {
 	data, err := json.MarshalIndent(plans, "", "  ")
@@ -94,7 +96,7 @@ func (w *Workspace) LoadRolePlans() []RolePlan {
 	return plans
 }
 
-// ── 이데아 관리 ──
+// ── Idea Management ──
 
 func (w *Workspace) LoadIdea(role string) string {
 	ideaFile := filepath.Join(w.IdeasDir, role+".yaml")
@@ -120,7 +122,7 @@ func (w *Workspace) SaveIdea(role, idea string) error {
 	return os.WriteFile(ideaFile, data, 0644)
 }
 
-// ── 계약서 ──
+// ── Contract ──
 
 func (w *Workspace) SaveContract(content string) error {
 	return os.WriteFile(filepath.Join(w.ContractsDir, "contract.yaml"), []byte(content), 0644)
@@ -134,7 +136,7 @@ func (w *Workspace) LoadContract() string {
 	return string(data)
 }
 
-// ── 세션 (CLI용 직접 접근) ──
+// ── Session (direct access for CLI) ──
 
 func (w *Workspace) SessionPath() string {
 	return filepath.Join(w.OrchestraDir, "session.json")
@@ -161,10 +163,10 @@ func (w *Workspace) SaveSession(s *Session) error {
 	return os.WriteFile(w.SessionPath(), data, 0644)
 }
 
-// ── 에이전트 팩토리 (GUI + CLI 공용) ──
+// ── Agent Factory (shared by GUI + CLI) ──
 
-// BuildAgentsFromPlans은 RolePlan 목록에서 Agent 맵을 생성합니다.
-// app.go의 buildTeamFromPlans와 동일한 로직이지만 Wails 의존성 없음.
+// BuildAgentsFromPlans creates an Agent map from RolePlan list.
+// Same logic as app.go's buildTeamFromPlans but without Wails dependency.
 func (w *Workspace) BuildAgentsFromPlans(plans []RolePlan) map[string]*Agent {
 	lockRegistry := NewFileLockRegistry(w.LocksDir)
 	agents := make(map[string]*Agent)
@@ -207,9 +209,9 @@ func (w *Workspace) BuildAgentsFromPlans(plans []RolePlan) map[string]*Agent {
 	return agents
 }
 
-// ── 워크스페이스 탐색 ──
+// ── Workspace Discovery ──
 
-// FindWorkspaceRoot는 현재 디렉토리부터 상위로 .orchestra/ 디렉토리를 찾습니다.
+// FindWorkspaceRoot walks up from the current directory looking for a .orchestra/ directory.
 func FindWorkspaceRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {

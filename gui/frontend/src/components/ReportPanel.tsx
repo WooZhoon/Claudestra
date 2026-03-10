@@ -1,10 +1,13 @@
+import { memo } from 'react';
+import MarkdownRenderer from './MarkdownRenderer';
+
 interface ReportPanelProps {
   report: string;
   visible: boolean;
   onClose: () => void;
 }
 
-export default function ReportPanel({ report, visible, onClose }: ReportPanelProps) {
+export default memo(function ReportPanel({ report, visible, onClose }: ReportPanelProps) {
   if (!visible || !report) return null;
 
   return (
@@ -46,12 +49,10 @@ export default function ReportPanel({ report, visible, onClose }: ReportPanelPro
         overflowY: 'auto',
         padding: '16px',
         fontSize: 13,
-        lineHeight: 1.8,
-        whiteSpace: 'pre-wrap',
         color: 'var(--text-secondary)',
       }}>
-        {report}
+        <MarkdownRenderer content={report} />
       </div>
     </div>
   );
-}
+});

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,6 +41,8 @@ func main() {
 		cmdAssign()
 	case "lead-session":
 		cmdLeadSession()
+	case "stop":
+		cmdStop()
 	case "hook":
 		cmdHook()
 	case "help", "--help", "-h":
@@ -67,10 +70,11 @@ func printUsage() {
   claudestra output <agent>            에이전트 최근 출력
   claudestra assign <agent> <instr>    팀원에게 태스크 실행 (동기)
   claudestra lead-session <request>   단일 세션 모드 (팀장이 CLI로 전체 관리)
+  claudestra stop <agent|job-id>     실행 중인 작업 중지
   claudestra hook pretooluse          PreToolUse 훅 (stdin에서 JSON 읽음)`)
 }
 
-// ── 헬퍼 ──
+// ── Helpers ──
 
 func mustWorkspace() *internal.Workspace {
 	root, err := internal.FindWorkspaceRoot()
@@ -123,8 +127,8 @@ func cmdStatus() {
 // ── team ──
 
 func cmdTeam() {
-	// team (인자 없음) → 목록 출력
-	// team set '<json>' → 팀 설정
+	// No args → list team
+	// "set" subcommand → configure team
 	if len(os.Args) >= 3 && os.Args[2] == "set" {
 		cmdTeamSet()
 		return
@@ -169,7 +173,7 @@ func cmdTeamSet() {
 		os.Exit(1)
 	}
 
-	// 유효성 검증
+	// Validate
 	for i, p := range plans {
 		if p.Role == "" || p.Directory == "" {
 			fmt.Fprintf(os.Stderr, "오류: plans[%d]에 role 또는 directory가 비어있습니다\n", i)
@@ -182,20 +186,20 @@ func cmdTeamSet() {
 
 	ws := mustWorkspace()
 
-	// 디렉토리 생성
+	// Create directories
 	var roles []string
 	for _, p := range plans {
 		roles = append(roles, p.Role)
 	}
 	ws.Init(roles)
 
-	// 팀 저장
+	// Save team
 	if err := ws.SaveRolePlans(plans); err != nil {
 		fmt.Fprintf(os.Stderr, "저장 오류: %s\n", err)
 		os.Exit(1)
 	}
 
-	// 이데아 저장
+	// Save ideas
 	for _, p := range plans {
 		if p.Description != "" {
 			ws.SaveIdea(p.Role, p.Description)
@@ -347,13 +351,13 @@ func cmdOutput() {
 // ── assign ──
 
 func cmdAssign() {
-	// --run-job <job-id> : 내부용 (백그라운드 프로세스가 호출)
+	// --run-job <job-id> : internal use (called by background process)
 	if len(os.Args) >= 4 && os.Args[2] == "--run-job" {
 		cmdRunJob(os.Args[3])
 		return
 	}
 
-	// 인자 파싱: --async 플래그 감지
+	// Parse args: detect --async flag
 	args := os.Args[2:]
 	async := false
 	var filtered []string
@@ -393,7 +397,7 @@ func cmdAssign() {
 	}
 }
 
-// 동기 실행: stdout에 스트리밍 + JSONL 듀얼 라이트
+// cmdAssignSync runs an agent synchronously with stdout streaming + JSONL dual-write.
 func cmdAssignSync(ws *internal.Workspace, agents map[string]*internal.Agent, agentID, instruction string) {
 	agent := agents[agentID]
 	agent.Reset()
@@ -409,9 +413,9 @@ func cmdAssignSync(ws *internal.Workspace, agents map[string]*internal.Agent, ag
 	fmt.Println(result)
 }
 
-// 비동기 실행: job 생성 → 자기 자신을 --run-job으로 재실행 → job-id 즉시 반환
+// cmdAssignAsync creates a job, re-executes itself with --run-job, and returns the job-id immediately.
 func cmdAssignAsync(ws *internal.Workspace, agentID, instruction string) {
-	// 1. job 파일 생성
+	// 1. Create job file
 	jobID := internal.NewJobID()
 	job := &internal.Job{
 		ID:          jobID,
@@ -425,31 +429,31 @@ func cmdAssignAsync(ws *internal.Workspace, agentID, instruction string) {
 		os.Exit(1)
 	}
 
-	// 2. 자기 자신을 detached subprocess로 재실행
+	// 2. Re-execute self as detached subprocess
 	self, _ := os.Executable()
 	cmd := exec.Command(self, "assign", "--run-job", jobID)
 	cmd.Dir = ws.Root
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // 부모로부터 detach
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach from parent
 
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "백그라운드 실행 실패: %s\n", err)
 		os.Exit(1)
 	}
 
-	// 3. PID 기록
+	// 3. Record PID
 	job.PID = cmd.Process.Pid
 	internal.SaveJob(ws.JobsDir, job)
 
-	// 4. 부모는 job-id 출력 후 즉시 종료
+	// 4. Print job-id and exit immediately
 	fmt.Println(jobID)
 
-	// detached 프로세스이므로 Wait 불필요 — 즉시 반환
+	// Detached process — no need to Wait
 	cmd.Process.Release()
 }
 
-// --run-job: 백그라운드에서 실제 에이전트 실행
+// cmdRunJob runs the actual agent in background (invoked by --run-job).
 func cmdRunJob(jobID string) {
 	ws := mustWorkspace()
 
@@ -467,16 +471,70 @@ func cmdRunJob(jobID string) {
 		os.Exit(1)
 	}
 
-	// 실행
+	// Execute
 	agent.Reset()
 	result := agent.Run(job.Instruction)
 
-	// job 완료 처리
+	// Finalize job
 	status := "done"
 	if agent.Status == internal.StatusError {
 		status = "error"
 	}
 	internal.FinishJob(ws.JobsDir, job, status, result)
+}
+
+// ── stop ──
+
+func cmdStop() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "사용법: claudestra stop <agent|job-id>")
+		os.Exit(1)
+	}
+
+	ws := mustWorkspace()
+	target := os.Args[2]
+
+	var job *internal.Job
+
+	// hex 12자이면 job-id로 직접 로드
+	if len(target) == 12 {
+		if _, err := hex.DecodeString(target); err == nil {
+			j, err := internal.LoadJob(ws.JobsDir, target)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "job을 찾을 수 없습니다: %s\n", target)
+				os.Exit(1)
+			}
+			job = j
+		}
+	}
+
+	// job-id가 아니면 agent 이름으로 running job 검색
+	if job == nil {
+		for _, j := range internal.ListJobs(ws.JobsDir) {
+			if j.Agent == target && j.Status == "running" {
+				job = j
+				break
+			}
+		}
+	}
+
+	if job == nil {
+		fmt.Println("실행 중인 작업이 없습니다")
+		return
+	}
+
+	if job.Status != "running" {
+		fmt.Printf("작업이 이미 종료되었습니다: %s (상태: %s)\n", job.ID, job.Status)
+		return
+	}
+
+	// 프로세스 그룹에 SIGTERM 전송
+	if job.PID > 0 {
+		syscall.Kill(-job.PID, syscall.SIGTERM)
+	}
+
+	internal.FinishJob(ws.JobsDir, job, "cancelled", "사용자에 의해 중지됨")
+	fmt.Printf("작업 중지 완료: %s (%s)\n", job.ID, job.Agent)
 }
 
 // ── lead-session ──
@@ -491,20 +549,20 @@ func cmdLeadSession() {
 	ws := mustWorkspace()
 	plans := mustPlans(ws)
 
-	// LeadAgent 구성
+	// Configure LeadAgent
 	lead := internal.NewLeadAgent(ws.Root)
 
-	// CLI 바이너리 경로 설정
+	// Set CLI binary path
 	self, _ := os.Executable()
 	lead.CLIPath = self
 
-	// 에이전트 구성
+	// Configure agents
 	agents := ws.BuildAgentsFromPlans(plans)
 	for _, agent := range agents {
 		lead.AddAgent(agent)
 	}
 
-	// 단일 세션 실행
+	// Run single session
 	result := lead.RunLeadSession(request, func(msg string) {
 		if len(msg) > 0 && msg[0] == '\x01' {
 			fmt.Print(msg[1:])
@@ -534,9 +592,9 @@ func cmdHook() {
 	}
 }
 
-// cmdHookPreToolUse: PreToolUse 훅 — stdin에서 JSON 읽고 화이트리스트 체크
+// cmdHookPreToolUse handles the PreToolUse hook — reads JSON from stdin and checks whitelist.
 func cmdHookPreToolUse() {
-	// stdin에서 훅 입력 읽기
+	// Read hook input from stdin
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		os.Exit(0) // 읽기 실패 시 허용
@@ -551,12 +609,12 @@ func cmdHookPreToolUse() {
 		os.Exit(0) // 파싱 실패 시 허용
 	}
 
-	// 화이트리스트 체크 → 허용
+	// Allow if whitelisted
 	if internal.IsWhitelisted(input.ToolName, input.ToolInput) {
 		os.Exit(0)
 	}
 
-	// 화이트리스트에 없음 → GUI 승인 요청
+	// Not whitelisted — request GUI approval
 	root, err := internal.FindWorkspaceRoot()
 	if err != nil {
 		os.Exit(0) // 워크스페이스 없으면 허용
@@ -578,7 +636,7 @@ func cmdHookPreToolUse() {
 	}
 	defer internal.CleanupPermission(permDir, reqID)
 
-	// 응답 대기 (최대 5분)
+	// Wait for response (max 5 minutes)
 	resp, err := internal.WaitForResponse(permDir, reqID, 5*time.Minute)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "권한 승인 대기 시간 초과")

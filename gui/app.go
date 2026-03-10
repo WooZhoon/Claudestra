@@ -39,7 +39,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
-// ── 프로젝트 관리 ──
+// ── Project Management ──
 
 func (a *App) InitProject(projectDir string) error {
 	a.workspace = internal.NewWorkspace(projectDir)
@@ -61,12 +61,12 @@ func (a *App) OpenProject(projectDir string) error {
 	a.lead = internal.NewLeadAgent(projectDir)
 	a.agents = make(map[string]*internal.Agent)
 
-	// 저장된 RolePlan 복원
+	// Restore saved RolePlans
 	a.rolePlans = ws.LoadRolePlans()
 	if len(a.rolePlans) > 0 {
 		a.buildTeamFromPlans(a.rolePlans)
 	} else if len(config.Agents) > 0 {
-		// 레거시 호환: 이전 config.yaml에 roles만 있는 경우
+		// Legacy compat: config.yaml with only roles
 		a.buildLegacyTeam(config.Agents)
 	}
 	return nil
@@ -77,7 +77,7 @@ func (a *App) buildTeamFromPlans(plans []internal.RolePlan) {
 	a.lead = internal.NewLeadAgent(a.workspace.Root)
 	a.agents = make(map[string]*internal.Agent)
 
-	// producer 디렉토리 목록 (consumer의 readRefs용)
+	// Collect producer directories for consumer readRefs
 	var producerDirs []string
 	for _, p := range plans {
 		if p.Type == "producer" {
@@ -94,7 +94,7 @@ func (a *App) buildTeamFromPlans(plans []internal.RolePlan) {
 		if isConsumer {
 			readRefs = producerDirs
 			allowedTools = internal.ConsumerTools
-			// doc_writer 등 쓰기가 필요한 consumer
+			// Consumers like doc_writer that need write access
 			if strings.Contains(plan.Description, "문서") || strings.Contains(plan.Description, "작성") {
 				allowedTools = append(internal.ConsumerTools, "Write")
 			}
@@ -110,6 +110,7 @@ func (a *App) buildTeamFromPlans(plans []internal.RolePlan) {
 			ReadRefs:     readRefs,
 			AllowedTools: allowedTools,
 			IsConsumer:   isConsumer,
+			LogPath:      filepath.Join(a.workspace.LogsDir, plan.Role+".jsonl"),
 		}
 		agent := internal.NewAgent(config, lockRegistry)
 		a.agents[plan.Role] = agent
@@ -117,7 +118,7 @@ func (a *App) buildTeamFromPlans(plans []internal.RolePlan) {
 	}
 }
 
-// 레거시 호환용 (이전 하드코딩 방식 config)
+// buildLegacyTeam handles legacy config format with hardcoded roles.
 func (a *App) buildLegacyTeam(roles []string) {
 	var plans []internal.RolePlan
 	for _, role := range roles {
@@ -137,7 +138,7 @@ func (a *App) buildLegacyTeam(roles []string) {
 	a.buildTeamFromPlans(plans)
 }
 
-// ── 이데아 관리 ──
+// ── Idea Management ──
 
 func (a *App) GetIdea(role string) string {
 	if a.workspace == nil {
@@ -153,7 +154,7 @@ func (a *App) UpdateIdea(role, idea string) error {
 	return a.workspace.SaveIdea(role, idea)
 }
 
-// ── 계약서 ──
+// ── Contract ──
 
 func (a *App) GetContract() string {
 	if a.workspace == nil {
@@ -162,7 +163,7 @@ func (a *App) GetContract() string {
 	return a.workspace.LoadContract()
 }
 
-// ── 상태 조회 ──
+// ── Status Query ──
 
 type AgentStatusInfo struct {
 	ID         string `json:"id"`
@@ -178,7 +179,7 @@ type AgentDetailInfo struct {
 	IsConsumer   bool     `json:"isConsumer"`
 	Instruction  string   `json:"instruction"`
 	Output       string   `json:"output"`
-	Logs         string   `json:"logs"` // JSONL에서 읽은 실행 로그
+	Logs         string   `json:"logs"` // execution logs read from JSONL
 	AllowedTools []string `json:"allowedTools"`
 }
 
@@ -188,7 +189,7 @@ func (a *App) GetAgentDetail(agentID string) *AgentDetailInfo {
 		return nil
 	}
 
-	// JSONL 로그에서 instruction, output, 실시간 로그 읽기
+	// Read instruction, output, and real-time logs from JSONL
 	instruction := agent.LastInstruction
 	output := agent.Output
 	var logs string
@@ -196,11 +197,11 @@ func (a *App) GetAgentDetail(agentID string) *AgentDetailInfo {
 	if a.workspace != nil {
 		logPath := filepath.Join(a.workspace.LogsDir, agentID+".jsonl")
 		if entries, err := readJSONLEntries(logPath); err == nil && len(entries) > 0 {
-			// 연속된 같은 타입 청크를 합쳐서 로그 구성
+			// Merge consecutive chunks of the same type into log lines
 			var logLines []string
 			var lastType string
 			for _, e := range entries {
-				// 연속된 같은 타입이면 마지막 줄에 이어붙임
+				// Append to last line if same consecutive type
 				if e.Type == lastType && (e.Type == "thinking" || e.Type == "text") && len(logLines) > 0 {
 					logLines[len(logLines)-1] += e.Message
 					continue
@@ -219,7 +220,7 @@ func (a *App) GetAgentDetail(agentID string) *AgentDetailInfo {
 			}
 			logs = strings.Join(logLines, "\n")
 
-			// output이 비어있으면 text 항목을 전부 합쳐서 가져오기
+			// If output is empty, concatenate all text entries
 			if output == "" {
 				var textParts []string
 				for _, e := range entries {
@@ -233,7 +234,7 @@ func (a *App) GetAgentDetail(agentID string) *AgentDetailInfo {
 			}
 		}
 
-		// instruction 파일에서 읽기 (CLI 프로세스가 기록)
+		// Read instruction file (written by CLI process)
 		if instruction == "" {
 			instrFile := filepath.Join(agent.Config.WorkDir, ".agent-instruction")
 			if data, err := os.ReadFile(instrFile); err == nil {
@@ -242,7 +243,7 @@ func (a *App) GetAgentDetail(agentID string) *AgentDetailInfo {
 		}
 	}
 
-	// status 파일에서 최신 상태 읽기 (CLI 프로세스가 업데이트했을 수 있음)
+	// Read latest status from file (may have been updated by CLI process)
 	status := string(agent.Status)
 	statusFile := filepath.Join(agent.Config.WorkDir, ".agent-status")
 	if data, err := os.ReadFile(statusFile); err == nil {
@@ -305,10 +306,10 @@ func (a *App) GetLocks() map[string]string {
 	return registry.ListLocks()
 }
 
-// ── 단일 세션 모드 (Phase D+E) ──
+// ── Single Session Mode (Phase D+E) ──
 
-// RunLeadSession: 팀장이 단일 Claude 세션으로 전체 워크플로를 처리합니다.
-// fsnotify로 .orchestra/logs/ 를 감시하여 sub-agent JSONL 출력을 실시간 전달합니다.
+// RunLeadSession runs the entire workflow in a single Claude session via the lead agent.
+// It watches .orchestra/logs/ with fsnotify to stream sub-agent JSONL output in real time.
 func (a *App) RunLeadSession(userInput string) string {
 	if a.lead == nil {
 		return "프로젝트를 먼저 열어주세요."
@@ -326,21 +327,21 @@ func (a *App) RunLeadSession(userInput string) string {
 		runtime.EventsEmit(a.ctx, "log", LogEvent{Type: evtType, Message: msg})
 	}
 
-	// .orchestra 디렉토리만 확보 (팀 구성은 Lead 세션이 CLI로 수행)
+	// Ensure .orchestra directory exists (team setup is done by lead session via CLI)
 	if a.workspace != nil {
 		a.workspace.Init(nil)
 	}
 
-	// CLIPath 자동 탐색
+	// Auto-discover CLI path
 	if a.lead.CLIPath == "" {
 		a.lead.CLIPath = findCLI()
 	}
 
-	// PreToolUse 훅 설정 (프로젝트 .claude/settings.json)
+	// Configure PreToolUse hook in project .claude/settings.json
 	a.ensureHookSettings()
 
-	// fsnotify 로그 감시 시작
-	// 연속된 같은 타입 청크는 append로 이어붙임 (줄바꿈 방지)
+	// Start fsnotify log watcher.
+	// Consecutive chunks of the same type are appended to avoid line breaks.
 	var lastAgent, lastType string
 	watcher := internal.NewLogWatcher(a.workspace.LogsDir, func(entry internal.LogEntry) {
 		prefix := fmt.Sprintf("[%s] ", entry.Agent)
@@ -374,7 +375,7 @@ func (a *App) RunLeadSession(userInput string) string {
 	}
 	defer watcher.Stop()
 
-	// permissions 감시 → GUI 승인 다이얼로그
+	// Watch permissions directory for GUI approval dialogs
 	permDir := internal.PermissionsDir(a.workspace.Root)
 	os.MkdirAll(permDir, 0755)
 	permWatcher, permErr := fsnotify.NewWatcher()
@@ -393,7 +394,7 @@ func (a *App) RunLeadSession(userInput string) string {
 					if (event.Has(fsnotify.Write) || event.Has(fsnotify.Create)) &&
 						strings.Contains(event.Name, "request-") &&
 						strings.HasSuffix(event.Name, ".json") {
-						// 요청 파일 읽기
+						// Read request file
 						data, err := os.ReadFile(event.Name)
 						if err != nil {
 							continue
@@ -414,7 +415,7 @@ func (a *App) RunLeadSession(userInput string) string {
 		}()
 	}
 
-	// team.json 변경 감시 → 사이드바 즉시 업데이트
+	// Watch team.json changes for immediate sidebar updates
 	teamWatcher, err := fsnotify.NewWatcher()
 	if err == nil {
 		teamWatcher.Add(a.workspace.OrchestraDir)
@@ -446,10 +447,10 @@ func (a *App) RunLeadSession(userInput string) string {
 		}()
 	}
 
-	// 단일 세션 실행
+	// Run single session
 	result := a.lead.RunLeadSession(userInput, logFn)
 
-	// 세션 완료 후 팀 리로드 (Lead가 team set으로 팀을 생성했을 수 있음)
+	// Reload team after session (lead may have created team via team set)
 	if plans := a.workspace.LoadRolePlans(); len(plans) > 0 && len(plans) != len(a.rolePlans) {
 		a.rolePlans = plans
 		a.buildTeamFromPlans(plans)
@@ -459,7 +460,7 @@ func (a *App) RunLeadSession(userInput string) string {
 	return result
 }
 
-// ── 프로젝트 디렉토리 선택 ──
+// ── Project Directory Selection ──
 
 func (a *App) SelectDirectory() (string, error) {
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
@@ -468,26 +469,18 @@ func (a *App) SelectDirectory() (string, error) {
 	return dir, err
 }
 
-func truncate(s string, maxLen int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > maxLen {
-		return s[:maxLen] + "..."
-	}
-	return s
-}
+// ── Session Cancel ──
 
-// ── 세션 취소 ──
-
-// CancelSession: 실행 중인 팀장 세션을 강제 중단합니다.
+// CancelSession forcefully stops the running lead session.
 func (a *App) CancelSession() {
 	if a.lead != nil {
 		a.lead.Cancel()
 	}
 }
 
-// ── 권한 승인/거부 ──
+// ── Permission Approval ──
 
-// RespondPermission: 프론트엔드에서 allow/disallow 클릭 시 호출
+// RespondPermission handles allow/disallow clicks from the frontend.
 func (a *App) RespondPermission(id string, allowed bool) error {
 	if a.workspace == nil {
 		return fmt.Errorf("프로젝트가 열려있지 않습니다")
@@ -512,7 +505,7 @@ func (a *App) ensureHookSettings() {
 	settingsDir := filepath.Join(a.workspace.Root, ".claude")
 	settingsFile := filepath.Join(settingsDir, "settings.json")
 
-	// 기존 설정 읽기
+	// Read existing settings
 	var settings map[string]interface{}
 	if data, err := os.ReadFile(settingsFile); err == nil {
 		json.Unmarshal(data, &settings)
@@ -521,7 +514,7 @@ func (a *App) ensureHookSettings() {
 		settings = make(map[string]interface{})
 	}
 
-	// 훅 설정 구성
+	// Build hook configuration
 	hookCommand := cliPath + " hook pretooluse"
 	expectedHook := map[string]interface{}{
 		"type":    "command",
@@ -545,24 +538,24 @@ func (a *App) ensureHookSettings() {
 
 // findCLI searches for the claudestra binary in common locations.
 func findCLI() string {
-	// 1. PATH에서 찾기
+	// 1. Search in PATH
 	if path, err := exec.LookPath("claudestra"); err == nil {
 		return path
 	}
-	// 2. ~/go/bin/ (go install 위치)
+	// 2. ~/go/bin/ (go install location)
 	if home, err := os.UserHomeDir(); err == nil {
 		gobin := filepath.Join(home, "go", "bin", "claudestra")
 		if _, err := os.Stat(gobin); err == nil {
 			return gobin
 		}
 	}
-	// 3. 실행파일 옆
+	// 3. Next to the executable
 	if self, err := os.Executable(); err == nil {
 		beside := filepath.Join(filepath.Dir(self), "claudestra")
 		if _, err := os.Stat(beside); err == nil {
 			return beside
 		}
 	}
-	// 폴백: PATH에 있다고 가정
+	// Fallback: assume it's in PATH
 	return "claudestra"
 }

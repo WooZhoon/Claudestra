@@ -75,7 +75,8 @@ func ListJobs(jobsDir string) []*Job {
 	return jobs
 }
 
-func CreateRunningJob(jobsDir, agent, instruction string, pid int) *Job {
+// CreateRunningJob creates a new running job and persists it.
+func CreateRunningJob(jobsDir, agent, instruction string, pid int) (*Job, error) {
 	job := &Job{
 		ID:          NewJobID(),
 		Agent:       agent,
@@ -84,8 +85,10 @@ func CreateRunningJob(jobsDir, agent, instruction string, pid int) *Job {
 		PID:         pid,
 		StartedAt:   time.Now().Format(time.RFC3339),
 	}
-	SaveJob(jobsDir, job)
-	return job
+	if err := SaveJob(jobsDir, job); err != nil {
+		return nil, err
+	}
+	return job, nil
 }
 
 func FinishJob(jobsDir string, job *Job, status, output string) {

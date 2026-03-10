@@ -179,6 +179,12 @@ GUI가 열리면 프로젝트 설정 화면이 나타납니다.
 - **Producer**: 코드를 직접 작성하는 팀원 (Read, Write, Edit, Bash 사용 가능)
 - **Consumer**: 다른 팀원의 결과물을 분석하는 팀원 (Read 전용, 리뷰어/QA 등)
 
+### 최근 개선사항
+
+- **마크다운 렌더링 지원**: react-markdown@8 + remark-gfm@3으로 에이전트 출력을 서식 있는 마크다운으로 표시
+- **CLI stop 명령 추가**: 실행 중인 세션을 CLI에서 직접 중지 가능
+- **코드 품질 개선**: 주석 영문화, 타입 힌트 강화, React.memo 적용, 미사용 코드 제거
+
 ---
 
 ## 문제 해결
@@ -214,7 +220,7 @@ Claude Code CLI에서 인증이 필요합니다. 터미널에서 `claude`를 한
 | 레이어 | 기술 |
 |--------|------|
 | GUI | Wails v2 (Go + WebView) |
-| 프론트엔드 | React 18 + TypeScript + Vite |
+| 프론트엔드 | React 18 + TypeScript + Vite + react-markdown + remark-gfm |
 | 백엔드 | Go 1.23 |
 | AI 엔진 | Claude Code CLI (stream-json 모드) |
 | 에이전트 격리 | subprocess + WorkDir + 파일 락 |

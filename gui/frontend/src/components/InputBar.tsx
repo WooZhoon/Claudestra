@@ -1,4 +1,4 @@
-import { useState, KeyboardEvent } from 'react';
+import { useState, useMemo, memo, KeyboardEvent } from 'react';
 
 interface InputBarProps {
   onSubmit: (input: string) => void;
@@ -6,8 +6,9 @@ interface InputBarProps {
   disabled: boolean;
 }
 
-export default function InputBar({ onSubmit, onCancel, disabled }: InputBarProps) {
+export default memo(function InputBar({ onSubmit, onCancel, disabled }: InputBarProps) {
   const [input, setInput] = useState('');
+  const hasInput = useMemo(() => input.trim().length > 0, [input]);
 
   const handleSubmit = () => {
     const trimmed = input.trim();
@@ -67,16 +68,16 @@ export default function InputBar({ onSubmit, onCancel, disabled }: InputBarProps
       ) : (
         <button
           onClick={handleSubmit}
-          disabled={!input.trim()}
+          disabled={!hasInput}
           style={{
             padding: '10px 20px',
             borderRadius: 8,
             border: 'none',
-            background: !input.trim() ? 'var(--bg-tertiary)' : 'var(--accent)',
-            color: !input.trim() ? 'var(--text-muted)' : '#1a1b26',
+            background: hasInput ? 'var(--accent)' : 'var(--bg-tertiary)',
+            color: hasInput ? '#1a1b26' : 'var(--text-muted)',
             fontSize: 14,
             fontWeight: 600,
-            cursor: !input.trim() ? 'not-allowed' : 'pointer',
+            cursor: hasInput ? 'pointer' : 'not-allowed',
           }}
         >
           전송
@@ -84,4 +85,4 @@ export default function InputBar({ onSubmit, onCancel, disabled }: InputBarProps
       )}
     </div>
   );
-}
+});

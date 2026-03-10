@@ -1,3 +1,6 @@
+import { memo } from 'react';
+import MarkdownRenderer from './MarkdownRenderer';
+
 interface AgentDetail {
   id: string;
   role: string;
@@ -24,7 +27,7 @@ const statusLabel: Record<string, { text: string; color: string }> = {
 
 export type { AgentDetail };
 
-export default function AgentDetailPanel({ detail, visible, onClose }: AgentDetailPanelProps) {
+export default memo(function AgentDetailPanel({ detail, visible, onClose }: AgentDetailPanelProps) {
   if (!visible || !detail) return null;
 
   const status = statusLabel[detail.status] || { text: detail.status, color: 'var(--text-muted)' };
@@ -137,21 +140,19 @@ export default function AgentDetailPanel({ detail, visible, onClose }: AgentDeta
         {/* 실행 결과 */}
         <Section title="실행 결과">
           {detail.output ? (
-            <pre style={{
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-              fontSize: 12,
-              lineHeight: 1.7,
-              color: 'var(--text-secondary)',
-              background: 'var(--bg-primary)',
-              padding: 12,
-              borderRadius: 6,
-              border: '1px solid var(--border)',
-              maxHeight: 300,
-              overflowY: 'auto',
-            }}>
-              {detail.output}
-            </pre>
+            <MarkdownRenderer
+              content={detail.output}
+              style={{
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+                background: 'var(--bg-primary)',
+                padding: 12,
+                borderRadius: 6,
+                border: '1px solid var(--border)',
+                maxHeight: 300,
+                overflowY: 'auto',
+              }}
+            />
           ) : (
             <Empty text="아직 결과가 없습니다" />
           )}
@@ -182,7 +183,7 @@ export default function AgentDetailPanel({ detail, visible, onClose }: AgentDeta
       </div>
     </div>
   );
-}
+});
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (

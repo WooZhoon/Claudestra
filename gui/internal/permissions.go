@@ -9,16 +9,16 @@ import (
 	"time"
 )
 
-// ── 화이트리스트 ──
+// ── Whitelist ──
 
-// whitelistedTools: 항상 자동 허용되는 도구
+// whitelistedTools lists tools that are always auto-allowed.
 var whitelistedTools = map[string]bool{
 	"Read": true,
 	"Glob": true,
 	"Grep": true,
 }
 
-// whitelistedCommands: Bash 도구에서 자동 허용되는 명령어 접두사
+// whitelistedCommands lists command prefixes auto-allowed in Bash tool.
 var whitelistedCommands = []string{
 	"claudestra",
 	"ls", "cat", "head", "tail", "find", "tree", "wc", "file", "stat",
@@ -26,7 +26,7 @@ var whitelistedCommands = []string{
 	"echo", "printf", "pwd", "which", "env", "date",
 }
 
-// whitelistedGitSubcommands: git의 읽기 전용 서브커맨드
+// whitelistedGitSubcommands lists read-only git subcommands.
 var whitelistedGitSubcommands = []string{
 	"status", "log", "diff", "branch", "show", "tag", "remote",
 	"stash list", "describe", "rev-parse", "ls-files", "ls-tree",
@@ -34,12 +34,12 @@ var whitelistedGitSubcommands = []string{
 
 // IsWhitelisted checks if a tool call should be auto-allowed.
 func IsWhitelisted(toolName string, toolInput map[string]interface{}) bool {
-	// 도구 자체가 화이트리스트에 있으면 허용
+	// Allow if tool itself is whitelisted
 	if whitelistedTools[toolName] {
 		return true
 	}
 
-	// Bash 명령어 체크
+	// Check Bash command
 	if toolName == "Bash" {
 		command, _ := toolInput["command"].(string)
 		return isWhitelistedCommand(command)
@@ -54,26 +54,26 @@ func isWhitelistedCommand(command string) bool {
 		return false
 	}
 
-	// 첫 번째 토큰 추출 (파이프/세미콜론 이전)
+	// Extract first token (before pipe/semicolon)
 	firstCmd := extractFirstCommand(command)
 
-	// 첫 번째 단어 (실행 파일) 추출 — basename도 체크 (풀 경로 대응)
+	// Extract first word (executable) — also check basename for full path support
 	firstWord := firstCmd
 	if idx := strings.Index(firstCmd, " "); idx >= 0 {
 		firstWord = firstCmd[:idx]
 	}
 	baseName := filepath.Base(firstWord)
 
-	// 화이트리스트 명령어 체크: 명령 이름 또는 basename으로 매칭
+	// Match command name or basename against whitelist
 	for _, wl := range whitelistedCommands {
 		if baseName == wl || firstCmd == wl || strings.HasPrefix(firstCmd, wl+" ") {
 			return true
 		}
 	}
 
-	// git 읽기 전용 서브커맨드 체크 (풀 경로 git도 대응)
+	// Check git read-only subcommands (supports full path git)
 	if baseName == "git" || strings.HasPrefix(firstCmd, "git ") {
-		// "git " 이후 또는 "/usr/bin/git " 이후 추출
+		// Extract args after "git " or "/usr/bin/git "
 		gitArgs := ""
 		if idx := strings.Index(firstCmd, "git "); idx >= 0 {
 			gitArgs = firstCmd[idx+4:]
@@ -90,7 +90,7 @@ func isWhitelistedCommand(command string) bool {
 
 // extractFirstCommand gets the first command from a pipeline or chain.
 func extractFirstCommand(cmd string) string {
-	// 파이프, 세미콜론, && 등으로 분리된 첫 번째 명령
+	// Split on pipe, semicolon, &&, etc. and take first command
 	for _, sep := range []string{"|", "&&", "||", ";"} {
 		if idx := strings.Index(cmd, sep); idx >= 0 {
 			cmd = strings.TrimSpace(cmd[:idx])
@@ -100,13 +100,13 @@ func extractFirstCommand(cmd string) string {
 	return cmd
 }
 
-// ── 권한 요청/응답 파일 ──
+// ── Permission Request/Response Files ──
 
 type PermissionRequest struct {
 	ID        string `json:"id"`
 	Tool      string `json:"tool"`
-	Command   string `json:"command"`   // Bash 명령어 또는 파일 경로
-	Agent     string `json:"agent"`     // 어떤 에이전트가 요청했는지
+	Command   string `json:"command"`   // bash command or file path
+	Agent     string `json:"agent"`     // requesting agent ID
 	Timestamp string `json:"timestamp"`
 }
 

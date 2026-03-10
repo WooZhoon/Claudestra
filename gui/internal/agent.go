@@ -20,10 +20,10 @@ const (
 	StatusError   AgentStatus = "ERROR"
 )
 
-// Producer (코드 작성자): 파일 읽기/쓰기/검색 + Bash
+// ProducerTools defines tools available to producer agents (file read/write/search + Bash).
 var ProducerTools = []string{"Read", "Write", "Edit", "Glob", "Grep", "Bash"}
 
-// Consumer (리뷰어 등): 읽기 전용
+// ConsumerTools defines tools available to consumer agents (read-only).
 var ConsumerTools = []string{"Read", "Glob", "Grep"}
 
 type AgentConfig struct {
@@ -31,14 +31,14 @@ type AgentConfig struct {
 	Role         string
 	Idea         string
 	WorkDir      string
-	ReadRefs     []string // Consumer 전용 읽기 전용 참조 경로
-	Contract     string   // 인터페이스 계약서
-	AllowedTools []string // 허용 도구 목록
-	IsConsumer   bool     // consumer 유형 여부
-	LogPath      string   // JSONL 로그 경로 (.orchestra/logs/{agent}.jsonl) — 비어있으면 기록 안 함
+	ReadRefs     []string // read-only reference paths for consumers
+	Contract     string   // interface contract
+	AllowedTools []string // allowed tool names
+	IsConsumer   bool     // whether this is a consumer agent
+	LogPath      string   // JSONL log path; empty disables logging
 }
 
-// LogEntry는 JSONL 로그 파일에 기록되는 한 줄의 항목입니다.
+// LogEntry represents a single line in a JSONL log file.
 type LogEntry struct {
 	Time    string `json:"time"`
 	Agent   string `json:"agent"`
@@ -62,7 +62,7 @@ func NewAgent(config AgentConfig, lockRegistry *FileLockRegistry) *Agent {
 		LockRegistry: lockRegistry,
 		Status:       StatusIdle,
 	}
-	// 기존 status 파일이 있으면 보존 (CLI 프로세스가 업데이트했을 수 있음)
+	// Preserve existing status file (may have been updated by CLI process)
 	statusFile := filepath.Join(config.WorkDir, ".agent-status")
 	if data, err := os.ReadFile(statusFile); err == nil {
 		s := strings.TrimSpace(string(data))
@@ -88,7 +88,7 @@ func (a *Agent) Run(instruction string, onStream ...func(string)) string {
 		streamFn = onStream[0]
 	}
 
-	// JSONL 로그 파일 (설정된 경우)
+	// Open JSONL log file if configured
 	var logFile *os.File
 	if a.Config.LogPath != "" {
 		os.MkdirAll(filepath.Dir(a.Config.LogPath), 0755)
@@ -120,7 +120,7 @@ func (a *Agent) Run(instruction string, onStream ...func(string)) string {
 		}
 	}
 
-	// 잠금 획득
+	// Acquire lock
 	if a.LockRegistry != nil {
 		if err := a.LockRegistry.Acquire(a.Config.WorkDir, a.Config.AgentID); err != nil {
 			a.Status = StatusError
@@ -146,7 +146,7 @@ func (a *Agent) Run(instruction string, onStream ...func(string)) string {
 	}
 	log(fmt.Sprintf("[%s] 🚀 시작: %s...", a.Config.Role, truncated))
 
-	// claude 명령 구성 (stream-json 모드)
+	// Build claude command (stream-json mode)
 	args := []string{"-p",
 		"--output-format", "stream-json",
 		"--include-partial-messages",
@@ -160,7 +160,7 @@ func (a *Agent) Run(instruction string, onStream ...func(string)) string {
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = a.Config.WorkDir
 	cmd.Stdin = strings.NewReader(prompt)
-	// Claude Code 중첩 세션 방지 환경변수 제거
+	// Remove env var to prevent nested Claude Code sessions
 	cmd.Env = filterEnv(os.Environ(), "CLAUDECODE")
 
 	stdout, err := cmd.StdoutPipe()
@@ -225,7 +225,7 @@ func (a *Agent) Run(instruction string, onStream ...func(string)) string {
 		})
 	}()
 
-	// 5분 타임아웃
+	// 5-minute timeout
 	select {
 	case <-done:
 		cmd.Wait()
@@ -300,7 +300,7 @@ func (a *Agent) writeInstruction(instruction string) {
 // filterEnv returns a copy of env with the named variable removed.
 func filterEnv(env []string, name string) []string {
 	prefix := name + "="
-	var filtered []string
+	filtered := make([]string, 0, len(env))
 	for _, e := range env {
 		if !strings.HasPrefix(e, prefix) {
 			filtered = append(filtered, e)

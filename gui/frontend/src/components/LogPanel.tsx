@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, memo } from 'react';
+import MarkdownRenderer from './MarkdownRenderer';
 
 export interface LogEntry {
   type: 'text' | 'thinking' | 'status';
@@ -57,6 +58,13 @@ export default memo(function LogPanel({ logs }: LogPanelProps) {
           );
         }
         const log = item.entry;
+        if (log.type === 'text') {
+          return (
+            <div key={i} style={{ color: getLogColor(log.message), wordBreak: 'break-word' }}>
+              <MarkdownRenderer content={log.message} />
+            </div>
+          );
+        }
         return (
           <div key={i} style={{
             color: getLogColor(log.message),

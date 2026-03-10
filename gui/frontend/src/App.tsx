@@ -134,7 +134,7 @@ export default function App() {
       setProjectOpen(true);
       addLog('text', `✅ 프로젝트 준비 완료: ${dir}`);
       addLog('text', '요구사항을 입력하면 팀장이 CLI 도구로 팀을 관리하고 작업을 수행합니다.');
-    } catch (e: any) {
+    } catch (e: unknown) {
       addLog('text', `❌ 초기화 실패: ${e}`);
     }
   }, [addLog]);
@@ -145,7 +145,7 @@ export default function App() {
       setProjectOpen(true);
       addLog('text', `✅ 프로젝트 열기 완료: ${dir}`);
       await refreshStatuses();
-    } catch (e: any) {
+    } catch (e: unknown) {
       addLog('text', `❌ 프로젝트 열기 실패: ${e}`);
     }
   }, [addLog, refreshStatuses]);
@@ -163,7 +163,7 @@ export default function App() {
         addLog('text', '\n✅ 작업 완료 — 보고서를 확인하세요.');
       }
       await refreshStatuses();
-    } catch (e: any) {
+    } catch (e: unknown) {
       addLog('text', `❌ 오류: ${e}`);
     }
     setRunning(false);
@@ -173,7 +173,7 @@ export default function App() {
     try {
       await WailsApp.CancelSession();
       addLog('text', '\n⛔ 세션 중단 요청됨');
-    } catch (e: any) {
+    } catch (e: unknown) {
       addLog('text', `❌ 중단 실패: ${e}`);
     }
   }, [addLog]);
