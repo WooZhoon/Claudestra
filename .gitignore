@@ -3,3 +3,6 @@ gui/claudestra
 gui/build/bin/
 gui/frontend/node_modules/
 gui/frontend/dist/
+.agent-instruction
+.agent-status
+*.md5
