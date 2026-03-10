@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -163,25 +164,44 @@ func (w *Workspace) SaveSession(s *Session) error {
 	return os.WriteFile(w.SessionPath(), data, 0644)
 }
 
+// ── Path Helpers ──
+
+func (w *Workspace) AgentDir(plan RolePlan) string {
+	return filepath.Join(w.Root, plan.Directory)
+}
+
+func (w *Workspace) LogPath(role string) string {
+	return filepath.Join(w.LogsDir, role+".jsonl")
+}
+
 // ── Agent Factory (shared by GUI + CLI) ──
 
+// BuildOptions controls optional behavior of BuildAgentsFromPlans.
+type BuildOptions struct {
+	DetectWriteTool bool // consumer에서 "문서"/"작성" 키워드 감지 시 Write 도구 추가
+	LoadContract    bool // contract.yaml 로딩 여부
+}
+
 // BuildAgentsFromPlans creates an Agent map from RolePlan list.
-// Same logic as app.go's buildTeamFromPlans but without Wails dependency.
-func (w *Workspace) BuildAgentsFromPlans(plans []RolePlan) map[string]*Agent {
+// This is the single factory used by both GUI and CLI.
+func (w *Workspace) BuildAgentsFromPlans(plans []RolePlan, opts BuildOptions) map[string]*Agent {
 	lockRegistry := NewFileLockRegistry(w.LocksDir)
 	agents := make(map[string]*Agent)
 
 	var producerDirs []string
 	for _, p := range plans {
 		if p.Type == "producer" {
-			producerDirs = append(producerDirs, filepath.Join(w.Root, p.Directory))
+			producerDirs = append(producerDirs, w.AgentDir(p))
 		}
 	}
 
-	contract := w.LoadContract()
+	var contract string
+	if opts.LoadContract {
+		contract = w.LoadContract()
+	}
 
 	for _, plan := range plans {
-		agentDir := filepath.Join(w.Root, plan.Directory)
+		agentDir := w.AgentDir(plan)
 		isConsumer := plan.Type == "consumer"
 
 		var readRefs []string
@@ -189,6 +209,11 @@ func (w *Workspace) BuildAgentsFromPlans(plans []RolePlan) map[string]*Agent {
 		if isConsumer {
 			readRefs = producerDirs
 			allowedTools = ConsumerTools
+			if opts.DetectWriteTool {
+				if strings.Contains(plan.Description, "문서") || strings.Contains(plan.Description, "작성") {
+					allowedTools = append(ConsumerTools, "Write")
+				}
+			}
 		} else {
 			allowedTools = ProducerTools
 		}
@@ -202,7 +227,7 @@ func (w *Workspace) BuildAgentsFromPlans(plans []RolePlan) map[string]*Agent {
 			AllowedTools: allowedTools,
 			IsConsumer:   isConsumer,
 			Contract:     contract,
-			LogPath:      filepath.Join(w.LogsDir, plan.Role+".jsonl"),
+			LogPath:      w.LogPath(plan.Role),
 		}
 		agents[plan.Role] = NewAgent(config, lockRegistry)
 	}

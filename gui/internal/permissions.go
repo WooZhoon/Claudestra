@@ -11,19 +11,26 @@ import (
 
 // ── Whitelist ──
 
-// whitelistedTools lists tools that are always auto-allowed.
+// whitelistedTools lists tools that are always auto-allowed for agents.
 var whitelistedTools = map[string]bool{
 	"Read": true,
 	"Glob": true,
 	"Grep": true,
 }
 
-// whitelistedCommands lists command prefixes auto-allowed in Bash tool.
+// whitelistedCommands lists command prefixes auto-allowed in Bash tool for agents.
+// Only non-destructive, read-only commands.
 var whitelistedCommands = []string{
 	"claudestra",
 	"ls", "cat", "head", "tail", "find", "tree", "wc", "file", "stat",
 	"grep", "rg", "ag", "fd",
 	"echo", "printf", "pwd", "which", "env", "date",
+	"diff", "md5sum", "sha256sum", "sha1sum",
+	"cp", "basename", "dirname", "realpath", "readlink",
+	"sort", "uniq", "cut", "tr", "tee", "xargs",
+	"less", "more", "strings", "hexdump", "xxd",
+	"du", "df", "id", "whoami", "hostname", "uname",
+	"jq", "yq", "column",
 }
 
 // whitelistedGitSubcommands lists read-only git subcommands.

@@ -86,6 +86,7 @@ make build                     # GUI 빌드
      ├── team set     → 팀원 구성
      ├── contract set → 인터페이스 계약서
      ├── assign       → 작업 지시 (동기/비동기)
+     ├── wait         → 비동기 작업 완료 대기
      │
      ▼
 ┌──────────┐  ┌──────────┐  ┌──────────┐
@@ -112,4 +113,61 @@ make build                     # GUI 빌드
 | 프론트엔드 | React 18 + TypeScript + Vite |
 | 백엔드 | Go 1.23 |
 | AI 엔진 | Claude Code CLI (stream-json) |
-| 격리 | subprocess + WorkDir + 파일 락 |
+| 에이전트 격리 | subprocess + WorkDir + 파일 락 |
+| 빌드/배포 | Docker 멀티스테이지 빌드 |
+
+---
+
+## CLI 명령어
+
+팀장 AI가 Bash 도구를 통해 호출하는 `claudestra` CLI 명령어:
+
+```bash
+claudestra team                           # 팀원 목록 (JSON)
+claudestra team set '<json>'              # 팀 구성 설정
+claudestra status                         # 팀원 전체 상태 출력
+claudestra assign  <agent> '<instr>'      # 동기 작업 지시 (완료까지 대기)
+claudestra assign --async <agent> '<instr>'  # 비동기 작업 지시 (job-id 반환)
+claudestra wait <agent1> [agent2 ...]     # 비동기 작업 완료 대기
+claudestra session get|update             # 세션 메모리 읽기/갱신
+claudestra contract get|set '<yaml>'      # 인터페이스 계약서 조회/설정
+claudestra idea    <agent>                # 에이전트 이데아 출력
+claudestra output  <agent>                # 에이전트 최근 출력 조회
+claudestra issues                         # 미해결 이슈 목록 출력
+```
+
+---
+
+## 프로젝트 구조
+
+```
+gui/
+├── app.go                (301줄) ← Wails RPC 바인딩, RunLeadSession
+├── app_watchers.go       (122줄) ← fsnotify 워처 (로그, 권한, 팀)
+├── app_detail.go         (164줄) ← 에이전트 상세 DTO, GetAgentDetail
+│
+├── cmd/claudestra/                ← CLI 바이너리 (v2.2 분할)
+│   ├── main.go           (97줄)  ← switch 라우팅, 공용 헬퍼
+│   ├── cmd_team.go      (117줄)  ← cmdStatus, cmdTeam, cmdTeamSet
+│   ├── cmd_session.go   (101줄)  ← cmdSession, cmdIssues, cmdLeadSession
+│   ├── cmd_agent.go     (267줄)  ← cmdAssign, cmdWait, cmdStop, cmdOutput, cmdIdea
+│   └── cmd_config.go    (138줄)  ← cmdContract, cmdHook
+│
+├── internal/
+│   ├── lead.go                   ← 팀장 에이전트
+│   ├── agent.go                  ← 팀원 에이전트 (subprocess 래핑)
+│   ├── workspace.go     (256줄)  ← BuildAgentsFromPlans 통합 팩토리
+│   ├── streamparser.go           ← Claude CLI stream-json 파서
+│   ├── filelock.go               ← 파일 락 레지스트리
+│   ├── permissions.go            ← 도구 화이트리스트
+│   ├── jobs.go                   ← Job CRUD (비동기 assign)
+│   └── logwatcher.go             ← fsnotify JSONL 로그 감시
+│
+└── frontend/src/                 ← React 18 + TypeScript
+```
+
+---
+
+## 문서
+
+- [기술설계문서 v2.2](docs/Claudestra_기술설계문서_v2.2.md) — 아키텍처, CLI 설계, 리팩토링 상세

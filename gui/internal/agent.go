@@ -161,7 +161,7 @@ func (a *Agent) Run(instruction string, onStream ...func(string)) string {
 	cmd.Dir = a.Config.WorkDir
 	cmd.Stdin = strings.NewReader(prompt)
 	// Remove env var to prevent nested Claude Code sessions
-	cmd.Env = filterEnv(os.Environ(), "CLAUDECODE")
+	cmd.Env = append(filterEnv(os.Environ(), "CLAUDECODE"), "CLAUDESTRA_AGENT=1")
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

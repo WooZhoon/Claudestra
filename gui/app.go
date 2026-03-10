@@ -11,7 +11,6 @@ import (
 
 	"gui/internal"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -51,7 +50,7 @@ func (a *App) InitProject(projectDir string) error {
 	// 기존 팀이 있으면 복원
 	a.rolePlans = ws.LoadRolePlans()
 	if len(a.rolePlans) > 0 {
-		a.buildTeamFromPlans(a.rolePlans)
+		a.rebuildTeam(a.rolePlans)
 	}
 	return nil
 }
@@ -71,7 +70,7 @@ func (a *App) OpenProject(projectDir string) error {
 	// Restore saved RolePlans
 	a.rolePlans = ws.LoadRolePlans()
 	if len(a.rolePlans) > 0 {
-		a.buildTeamFromPlans(a.rolePlans)
+		a.rebuildTeam(a.rolePlans)
 	} else if len(config.Agents) > 0 {
 		// Legacy compat: config.yaml with only roles
 		a.buildLegacyTeam(config.Agents)
@@ -79,48 +78,12 @@ func (a *App) OpenProject(projectDir string) error {
 	return nil
 }
 
-func (a *App) buildTeamFromPlans(plans []internal.RolePlan) {
-	lockRegistry := internal.NewFileLockRegistry(a.workspace.LocksDir)
+// rebuildTeam builds the agent team from plans using the shared factory.
+func (a *App) rebuildTeam(plans []internal.RolePlan) {
+	agents := a.workspace.BuildAgentsFromPlans(plans, internal.BuildOptions{DetectWriteTool: true, LoadContract: true})
+	a.agents = agents
 	a.lead = internal.NewLeadAgent(a.workspace.Root)
-	a.agents = make(map[string]*internal.Agent)
-
-	// Collect producer directories for consumer readRefs
-	var producerDirs []string
-	for _, p := range plans {
-		if p.Type == "producer" {
-			producerDirs = append(producerDirs, filepath.Join(a.workspace.Root, p.Directory))
-		}
-	}
-
-	for _, plan := range plans {
-		agentDir := filepath.Join(a.workspace.Root, plan.Directory)
-		isConsumer := plan.Type == "consumer"
-
-		var readRefs []string
-		var allowedTools []string
-		if isConsumer {
-			readRefs = producerDirs
-			allowedTools = internal.ConsumerTools
-			// Consumers like doc_writer that need write access
-			if strings.Contains(plan.Description, "문서") || strings.Contains(plan.Description, "작성") {
-				allowedTools = append(internal.ConsumerTools, "Write")
-			}
-		} else {
-			allowedTools = internal.ProducerTools
-		}
-
-		config := internal.AgentConfig{
-			AgentID:      plan.Role,
-			Role:         plan.Role,
-			Idea:         plan.Description,
-			WorkDir:      agentDir,
-			ReadRefs:     readRefs,
-			AllowedTools: allowedTools,
-			IsConsumer:   isConsumer,
-			LogPath:      filepath.Join(a.workspace.LogsDir, plan.Role+".jsonl"),
-		}
-		agent := internal.NewAgent(config, lockRegistry)
-		a.agents[plan.Role] = agent
+	for _, agent := range agents {
 		a.lead.AddAgent(agent)
 	}
 }
@@ -142,7 +105,7 @@ func (a *App) buildLegacyTeam(roles []string) {
 		})
 	}
 	a.rolePlans = plans
-	a.buildTeamFromPlans(plans)
+	a.rebuildTeam(plans)
 }
 
 // ── Idea Management ──
@@ -168,158 +131,6 @@ func (a *App) GetContract() string {
 		return ""
 	}
 	return a.workspace.LoadContract()
-}
-
-// ── Status Query ──
-
-type AgentStatusInfo struct {
-	ID         string `json:"id"`
-	Role       string `json:"role"`
-	Status     string `json:"status"`
-	IsConsumer bool   `json:"isConsumer"`
-}
-
-type AgentDetailInfo struct {
-	ID           string   `json:"id"`
-	Role         string   `json:"role"`
-	Status       string   `json:"status"`
-	IsConsumer   bool     `json:"isConsumer"`
-	Instruction  string   `json:"instruction"`
-	Output       string   `json:"output"`
-	Logs         string   `json:"logs"` // execution logs read from JSONL
-	AllowedTools []string `json:"allowedTools"`
-}
-
-func (a *App) GetAgentDetail(agentID string) *AgentDetailInfo {
-	agent, ok := a.agents[agentID]
-	if !ok {
-		return nil
-	}
-
-	// Read instruction, output, and real-time logs from JSONL
-	instruction := agent.LastInstruction
-	output := agent.Output
-	var logs string
-
-	if a.workspace != nil {
-		logPath := filepath.Join(a.workspace.LogsDir, agentID+".jsonl")
-		if entries, err := readJSONLEntries(logPath); err == nil && len(entries) > 0 {
-			// Merge consecutive chunks of the same type into log lines
-			var logLines []string
-			var lastType string
-			for _, e := range entries {
-				// Append to last line if same consecutive type
-				if e.Type == lastType && (e.Type == "thinking" || e.Type == "text") && len(logLines) > 0 {
-					logLines[len(logLines)-1] += e.Message
-					continue
-				}
-				lastType = e.Type
-				switch e.Type {
-				case "thinking":
-					logLines = append(logLines, "💭 "+e.Message)
-				case "tool":
-					logLines = append(logLines, "🔧 "+e.Message)
-				case "text":
-					logLines = append(logLines, e.Message)
-				case "status":
-					logLines = append(logLines, "📌 "+e.Message)
-				}
-			}
-			logs = strings.Join(logLines, "\n")
-
-			// If output is empty, concatenate all text entries
-			if output == "" {
-				var textParts []string
-				for _, e := range entries {
-					if e.Type == "text" {
-						textParts = append(textParts, e.Message)
-					}
-				}
-				if len(textParts) > 0 {
-					output = strings.Join(textParts, "")
-				}
-			}
-		}
-
-		// Read instruction file (written by CLI process)
-		if instruction == "" {
-			instrFile := filepath.Join(agent.Config.WorkDir, ".agent-instruction")
-			if data, err := os.ReadFile(instrFile); err == nil {
-				instruction = strings.TrimSpace(string(data))
-			}
-		}
-	}
-
-	// Read latest status from file (may have been updated by CLI process)
-	status := string(agent.Status)
-	statusFile := filepath.Join(agent.Config.WorkDir, ".agent-status")
-	if data, err := os.ReadFile(statusFile); err == nil {
-		s := strings.TrimSpace(string(data))
-		if s != "" {
-			status = s
-		}
-	}
-
-	return &AgentDetailInfo{
-		ID:           agent.Config.AgentID,
-		Role:         agent.Config.Role,
-		Status:       status,
-		IsConsumer:   agent.Config.IsConsumer,
-		Instruction:  instruction,
-		Output:       output,
-		Logs:         logs,
-		AllowedTools: agent.Config.AllowedTools,
-	}
-}
-
-// readJSONLEntries reads log entries from a JSONL file.
-func readJSONLEntries(path string) ([]internal.LogEntry, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var entries []internal.LogEntry
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var e internal.LogEntry
-		if err := json.Unmarshal([]byte(line), &e); err == nil {
-			entries = append(entries, e)
-		}
-	}
-	return entries, nil
-}
-
-func (a *App) GetAgentStatuses() []AgentStatusInfo {
-	var statuses []AgentStatusInfo
-	for _, agent := range a.agents {
-		// 디스크에서 최신 상태 읽기 (.agent-status 파일)
-		status := string(agent.Status)
-		statusFile := filepath.Join(agent.Config.WorkDir, ".agent-status")
-		if data, err := os.ReadFile(statusFile); err == nil {
-			if s := strings.TrimSpace(string(data)); s != "" {
-				status = s
-				agent.Status = internal.AgentStatus(s)
-			}
-		}
-		statuses = append(statuses, AgentStatusInfo{
-			ID:         agent.Config.AgentID,
-			Role:       agent.Config.Role,
-			Status:     status,
-			IsConsumer: agent.Config.IsConsumer,
-		})
-	}
-	return statuses
-}
-
-func (a *App) GetLocks() map[string]string {
-	if a.workspace == nil {
-		return nil
-	}
-	registry := internal.NewFileLockRegistry(a.workspace.LocksDir)
-	return registry.ListLocks()
 }
 
 // ── Single Session Mode (Phase D+E) ──
@@ -356,107 +167,20 @@ func (a *App) RunLeadSession(userInput string) string {
 	// Configure PreToolUse hook in project .claude/settings.json
 	a.ensureHookSettings()
 
-	// Start fsnotify log watcher.
-	// Consecutive chunks of the same type are appended to avoid line breaks.
-	var lastAgent, lastType string
-	watcher := internal.NewLogWatcher(a.workspace.LogsDir, func(entry internal.LogEntry) {
-		prefix := fmt.Sprintf("[%s] ", entry.Agent)
-		isContinuation := entry.Agent == lastAgent && entry.Type == lastType &&
-			(entry.Type == "thinking" || entry.Type == "text")
+	// Start watchers (log, permission, team)
+	logWatcher := a.startLogWatcher(logFn)
+	defer logWatcher.Stop()
 
-		switch entry.Type {
-		case "thinking":
-			if isContinuation {
-				runtime.EventsEmit(a.ctx, "log-append", LogEvent{Message: entry.Message, Agent: entry.Agent})
-			} else {
-				runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "thinking", Message: prefix + "💭 " + entry.Message, Agent: entry.Agent})
-			}
-		case "tool":
-			runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "thinking", Message: prefix + "🔧 " + entry.Message, Agent: entry.Agent})
-		case "text":
-			if isContinuation {
-				runtime.EventsEmit(a.ctx, "log-append", LogEvent{Message: entry.Message, Agent: entry.Agent})
-			} else {
-				runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "text", Message: prefix + entry.Message, Agent: entry.Agent})
-			}
-		case "status":
-			runtime.EventsEmit(a.ctx, "log", LogEvent{Type: "text", Message: prefix + "📌 " + entry.Message, Agent: entry.Agent})
-			runtime.EventsEmit(a.ctx, "team-updated", a.GetAgentStatuses())
-		}
-		lastAgent = entry.Agent
-		lastType = entry.Type
-	})
-	if err := watcher.Start(); err != nil {
-		logFn(fmt.Sprintf("[팀장] ⚠️ 로그 감시 시작 실패: %s", err))
-	}
-	defer watcher.Stop()
-
-	// Watch permissions directory for GUI approval dialogs
-	permDir := internal.PermissionsDir(a.workspace.Root)
-	os.MkdirAll(permDir, 0755)
-	permWatcher, permErr := fsnotify.NewWatcher()
-	if permErr == nil {
-		permWatcher.Add(permDir)
-		permStop := make(chan struct{})
-		go func() {
-			for {
-				select {
-				case <-permStop:
-					return
-				case event, ok := <-permWatcher.Events:
-					if !ok {
-						return
-					}
-					if (event.Has(fsnotify.Write) || event.Has(fsnotify.Create)) &&
-						strings.Contains(event.Name, "request-") &&
-						strings.HasSuffix(event.Name, ".json") {
-						// Read request file
-						data, err := os.ReadFile(event.Name)
-						if err != nil {
-							continue
-						}
-						var req internal.PermissionRequest
-						if err := json.Unmarshal(data, &req); err != nil {
-							continue
-						}
-						runtime.EventsEmit(a.ctx, "permission-request", req)
-					}
-				case <-permWatcher.Errors:
-				}
-			}
-		}()
+	permWatcher, permStop := a.startPermissionWatcher()
+	if permWatcher != nil {
 		defer func() {
 			close(permStop)
 			permWatcher.Close()
 		}()
 	}
 
-	// Watch team.json changes for immediate sidebar updates
-	teamWatcher, err := fsnotify.NewWatcher()
-	if err == nil {
-		teamWatcher.Add(a.workspace.OrchestraDir)
-		teamStop := make(chan struct{})
-		go func() {
-			for {
-				select {
-				case <-teamStop:
-					return
-				case event, ok := <-teamWatcher.Events:
-					if !ok {
-						return
-					}
-					if (event.Has(fsnotify.Write) || event.Has(fsnotify.Create)) &&
-						strings.HasSuffix(event.Name, "team.json") {
-						if plans := a.workspace.LoadRolePlans(); len(plans) > 0 {
-							a.rolePlans = plans
-							a.buildTeamFromPlans(plans)
-							runtime.EventsEmit(a.ctx, "team-updated", a.GetAgentStatuses())
-						}
-					}
-				case <-teamWatcher.Errors:
-				}
-			}
-		}()
+	teamWatcher, teamStop := a.startTeamWatcher()
+	if teamWatcher != nil {
 		defer func() {
 			close(teamStop)
 			teamWatcher.Close()
@@ -469,7 +193,7 @@ func (a *App) RunLeadSession(userInput string) string {
 	// Reload team after session (lead may have created team via team set)
 	if plans := a.workspace.LoadRolePlans(); len(plans) > 0 && len(plans) != len(a.rolePlans) {
 		a.rolePlans = plans
-		a.buildTeamFromPlans(plans)
+		a.rebuildTeam(plans)
 	}
 	runtime.EventsEmit(a.ctx, "team-updated", a.GetAgentStatuses())
 
